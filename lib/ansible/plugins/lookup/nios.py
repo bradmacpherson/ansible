@@ -45,7 +45,7 @@ options:
       required: False
       default: null
     extattrs:
-      descrpition: a dict object that is used to filter on extattrs
+      description: a dict object that is used to filter on extattrs
       required: false
       default: null
 """
@@ -88,7 +88,7 @@ obj_type:
     - The object type specified in the terms argument
   returned: always
   type: complex
-  contains
+  contains:
     obj_field:
       - One or more obj_type fields as specified by return_fields argument or
         the default set of fields as per the object type

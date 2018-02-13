@@ -38,54 +38,57 @@ options:
     description:
     - The name of the end point group.
     aliases: [ epg_name ]
-  encap:
+  encap_id:
     description:
-    - The VLAN encapsulation for the EPG.
-    - This acts as the secondary encap when using useg.
-    aliases: [ encapsulation ]
-    choices: [ range from 1 to 4096 ]
-  primary_encap:
+    - The encapsulation ID associating the C(epg) with the interface path.
+    - This acts as the secondary C(encap_id) when using micro-segmentation.
+    aliases: [ vlan, vlan_id ]
+    choices: [ Valid encap IDs for specified encap, currently 1 to 4096 ]
+  primary_encap_id:
     description:
-    - Determines the primary VLAN ID when using useg.
-    aliases: [ primary_encapsulation ]
-    choices: [ range from 1 to 4096 ]
+    - Determines the primary encapsulation ID associating the C(epg)
+      with the interface path when using micro-segmentation.
+    aliases: [ primary_vlan, primary_vlan_id ]
+    choices: [ Valid encap IDs for specified encap, currently 1 to 4096 ]
   deploy_immediacy:
     description:
     - The Deployement Immediacy of Static EPG on PC, VPC or Interface.
     - The APIC defaults the Deployement Immediacy to C(lazy).
     choices: [ immediate, lazy ]
     default: lazy
-  mode:
+  interface_mode:
     description:
-    - Mode of static EPG deployement.
-    - The APIC defaults the mode to C(regular).
-    choices: [ untagged, native, regular ]
-    default: regular
-    aliases: [ mode_name ]
-  connection_type:
+    - Determines how layer 2 tags will be read from and added to frames.
+    - The APIC defaults the mode to C(trunk).
+    choices: [ access, trunk, 802.1p ]
+    default: trunk
+    aliases: [ mode, interface_mode_name ]
+  interface_type:
     description:
-    - The Path Type for the static EPG deployement.
-    - The APIC defaults the Path Type to C(access_interface) which is the same as C(Port).
-    choices: [ access_interface, virtual_port_channel, direct_port_channel, fex ]
-    default: access_interface
+    - The type of interface for the static EPG deployement.
+    - The APIC defaults the C(interface_type) to C(switch_port).
+    choices: [ switch_port, vpc, port_channel, fex ]
+    default: switch_port
   pod:
     description:
     - The pod number part of the tDn.
     - C(pod) is usually an integer below 10.
     aliases: [ pod_number ]
-  paths:
+  leafs:
     description:
-    - The C(paths) string value part of the tDn (also used for protpaths in the tDn when selecting C(virtual_port_channel) as the C(connection_type)).
-    - C(paths) is usually something like '1011' or '1011-1012' depending on C(connection_type).
+    - The switch ID(s) that the C(interface) belongs to.
+    - When C(interface_type) is C(switch_port), C(port_channel), or C(fex), then C(leafs) is a string of the leaf ID.
+    - When C(interface_type) is C(vpc), then C(leafs) is a list with both leaf IDs.
+    aliases: [ paths, leaves, nodes, switches ]
   interface:
     description:
     - The C(interface) string value part of the tDn.
-    - Usually a policy group like "test-IntPolGrp" or an interface of the following format "1/7" depending on C(connection_type).
+    - Usually a policy group like "test-IntPolGrp" or an interface of the following format "1/7" depending on C(interface_type).
   extpaths:
     description:
     - The C(extpaths) integer value part of the tDn.
-    - C(extpaths) is only used if C(connection_type) is C(fex).
-    - Usually something like '1011'(int).
+    - C(extpaths) is only used if C(interface_type) is C(fex).
+    - Usually something like '1011'.
   state:
     description:
     - Use C(present) or C(absent) for adding or removing.
@@ -96,7 +99,7 @@ extends_documentation_fragment: aci
 '''
 
 EXAMPLES = r'''
-- name: Deploy Static EPG (Port Channel)
+- name: Deploy Static Path for EPG
   aci_static_binding_to_epg:
     host: apic
     username: admin
@@ -104,15 +107,13 @@ EXAMPLES = r'''
     tenant: accessport-code-cert
     ap: accessport_code_app
     epg: accessport_epg1
-    encap: 222
-    # primary_encap: 11
+    encap_id: 222
     deploy_immediacy: lazy
-    mode: regular
-    connection_type: access_interface
+    interface_mode: access
+    interface_type: switch_port
     pod: 1
-    paths: 1011
+    leafs: 101
     interface: '1/7'
-    # extpaths: 1011
     state: present
 '''
 
@@ -124,7 +125,6 @@ from ansible.module_utils.network.aci.aci import ACIModule, aci_argument_spec
 from ansible.module_utils.basic import AnsibleModule
 
 # TODO: change 'deploy_immediacy' to 'resolution_immediacy' (as seen in aci_epg_to_domain)?
-# TODO: change C(access_interface) to C(Port) or C(port_channel) as seen on GUI in the 'connection_type' parameter
 
 
 def main():
@@ -133,18 +133,18 @@ def main():
         tenant=dict(type='str', aliases=['tenant_name']),
         ap=dict(type='str', aliases=['app_profile', 'app_profile_name']),
         epg=dict(type='str', aliases=['epg_name']),
-        encap=dict(type='int', aliases=['encapsulation']),
-        primary_encap=dict(type='int', aliases=['primary_encapsulation']),
+        encap_id=dict(type='int', aliases=['vlan', 'vlan_id']),
+        primary_encap_id=dict(type='int', aliases=['primary_vlan', 'primary_vlan_id']),
         deploy_immediacy=dict(type='str', choices=['immediate', 'lazy']),
-        mode=dict(type='str', choices=['untagged', 'native', 'regular'], aliases=['mode_name']),
-        connection_type=dict(type='str', choices=['access_interface', 'virtual_port_channel', 'direct_port_channel', 'fex'], required=True),
+        interface_mode=dict(type='str', choices=['access', 'tagged', '802.1p'], aliases=['mode', 'interface_mode_name']),
+        interface_type=dict(type='str', choices=['switch_port', 'vpc', 'port_channel', 'fex'], required=True),
         # NOTE: C(pod) is usually an integer below 10.
         pod=dict(type='int', aliases=['pod_number']),
-        # NOTE: C(paths) is usually something like '1011' or '1011-1012' depending on C(connection_type).
-        paths=dict(type='str'),
-        # NOTE: C(interface) is usually a policy group like: "test-IntPolGrp" or an interface of the following format: "1/7" depending on C(connection_type).
+        # NOTE: C(leafs) is usually something like '101' or '101-102' depending on C(connection_type).
+        leafs=dict(type='list', aliases=['paths', 'leaves', 'nodes', 'switches']),
+        # NOTE: C(interface) is usually a policy group like: "test-IntPolGrp" or an interface of the following format: "1/7" depending on C(interface_type).
         interface=dict(type='str'),
-        # NOTE: C(extpaths) is only used if C(connection_type) is C(fex), it is usually something like '1011'(int)
+        # NOTE: C(extpaths) is only used if C(interface_type) is C(fex), it is usually something like '1011'(int)
         extpaths=dict(type='int'),
         state=dict(type='str', default='present', choices=['absent', 'present', 'query']),
     )
@@ -153,54 +153,66 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
         required_if=[
-            # NOTE: extpaths is a requirement if 'connection_type' is 'fex'
-            ['state', 'absent', ['tenant', 'ap', 'epg', 'pod', 'paths', 'interface']],
-            ['state', 'present', ['tenant', 'ap', 'epg', 'encap', 'connection_type', 'pod', 'paths', 'interface']],
+            ['state', 'absent', ['tenant', 'ap', 'epg', 'interface_type', 'pod', 'leafs', 'interface']],
+            ['state', 'present', ['tenant', 'ap', 'epg', 'encap_id', 'interface_type', 'pod', 'leafs', 'interface']],
+            ['interface_type', 'fex', ['extpaths']],
         ],
     )
 
     tenant = module.params['tenant']
     ap = module.params['ap']
     epg = module.params['epg']
-    encap = module.params['encap']
-    primary_encap = module.params['primary_encap']
+    encap_id = module.params['encap_id']
+    primary_encap_id = module.params['primary_encap_id']
     deploy_immediacy = module.params['deploy_immediacy']
-    mode = module.params['mode']
-    connection_type = module.params['connection_type']
+    interface_mode = module.params['interface_mode']
+    interface_type = module.params['interface_type']
     pod = module.params['pod']
-    paths = module.params['paths']
+    # Users are likely to use integers for leaf IDs, which would raise an exception when using the join method
+    leafs = [str(leaf) for leaf in module.params['leafs']]
+    if leafs is not None:
+        if len(leafs) == 1:
+            if interface_type != 'vpc':
+                leafs = leafs[0]
+            else:
+                module.fail_json(msg='A interface_type of "vpc" requires 2 leafs')
+        elif len(leafs) == 2:
+            if interface_type == 'vpc':
+                leafs = "-".join(leafs)
+            else:
+                module.fail_json(msg='The interface_types "switch_port", "port_channel", and "fex" \
+                    do not support using multiple leafs for a single binding')
+        else:
+            module.fail_json(msg='The "leafs" parameter must not have more than 2 entries')
     interface = module.params['interface']
     extpaths = module.params['extpaths']
     state = module.params['state']
     static_path = ''
 
-    if encap is not None:
-        if encap in range(1, 4097):
-            encap = 'vlan-{0}'.format(encap)
+    if encap_id is not None:
+        if encap_id in range(1, 4097):
+            encap_id = 'vlan-{0}'.format(encap_id)
         else:
             module.fail_json(msg='Valid VLAN assigments are from 1 to 4096')
 
-    if primary_encap is not None:
-        if primary_encap in range(1, 4097):
-            primary_encap = 'vlan-{0}'.format(primary_encap)
+    if primary_encap_id is not None:
+        if primary_encap_id in range(1, 4097):
+            primary_encap_id = 'vlan-{0}'.format(primary_encap_id)
         else:
             module.fail_json(msg='Valid VLAN assigments are from 1 to 4096')
 
-    if connection_type == 'fex' and extpaths is None:
-        module.fail_json(msg='extpaths must be defined')
-
-    CONNECTION_TYPE_MAPPING = dict(
-        # NOTE: C(interface) can be a policy group like: "test-IntPolGrp" or of following format: "1/7", C(paths) can only be something like '1011'(int)
-        access_interface='topology/pod-{0}/paths-{1}/pathep-[eth{2}]'.format(pod, paths, interface),
-        # NOTE: C(interface) can be a policy group like: "test-IntPolGrp" or of following format: "1/7", C(paths) can only be something like '1011'(int)
-        direct_port_channel='topology/pod-{0}/paths-{1}/pathep-[eth{2}]'.format(pod, paths, interface),
-        # NOTE: C(interface) can be a policy group like: "test-IntPolGrp", C(paths) can be something like 1011-1012'(str)
-        virtual_port_channel='topology/pod-{0}/protpaths-{1}/pathep-[{2}]'.format(pod, paths, interface),
-        # NOTE: C(interface) can be of the following format: "1/7", C(paths) can only be like '1011'(int), C(extpaths) can only be like '1011'(int)
-        fex='topology/pod-{0}/paths-{1}/extpaths-{2}/pathep-[eth{3}]'.format(pod, paths, extpaths, interface),
+    INTERFACE_TYPE_MAPPING = dict(
+        # NOTE: C(interface) can be a policy group like: 'test-IntPolGrp' or of following format: '1/7', C(leafs) can only be something like '101'
+        switch_port='topology/pod-{0}/paths-{1}/pathep-[eth{2}]'.format(pod, leafs, interface),
+        # NOTE: C(interface) can be a policy group like: 'test-IntPolGrp' or of following format: '1/7', C(leafs) can only be something like '101'
+        port_channel='topology/pod-{0}/paths-{1}/pathep-[eth{2}]'.format(pod, leafs, interface),
+        # NOTE: C(interface) can be a policy group like: 'test-IntPolGrp', C(leafs) can be something like '101-102'
+        vpc='topology/pod-{0}/protpaths-{1}/pathep-[{2}]'.format(pod, leafs, interface),
+        # NOTE: C(interface) can be of the following format: '1/7', C(leafs) can only be like '101', C(extpaths) can only be like '1011'
+        fex='topology/pod-{0}/paths-{1}/extpaths-{2}/pathep-[eth{3}]'.format(pod, leafs, extpaths, interface),
     )
 
-    static_path = CONNECTION_TYPE_MAPPING[connection_type]
+    static_path = INTERFACE_TYPE_MAPPING[interface_type]
 
     aci = ACIModule(module)
     aci.construct_url(
@@ -237,10 +249,10 @@ def main():
         aci.payload(
             aci_class='fvRsPathAtt',
             class_config=dict(
-                encap=encap,
-                primaryEncap=primary_encap,
+                encap=encap_id,
+                primaryEncap=primary_encap_id,
                 instrImedcy=deploy_immediacy,
-                mode=mode,
+                mode=interface_mode,
                 tDn=static_path,
             ),
         )

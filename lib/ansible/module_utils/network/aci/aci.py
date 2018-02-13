@@ -169,24 +169,34 @@ class ACIModule(object):
 
     def boolean(self, value, true='yes', false='no'):
         ''' Return an acceptable value back '''
+
+        # When we expect value is of type=bool
         if value is None:
             return None
         elif value is True:
             return true
         elif value is False:
             return false
-        elif boolean(value) is True:  # When type=raw, this supports Ansible booleans
-            return true
-        elif boolean(value) is False:  # When type=raw, this supports Ansible booleans
-            return false
-        elif value == true:  # When type=raw, this supports the original boolean values
-            self.module.deprecate("Boolean value '%s' is no longer valid, please use 'yes' as a boolean value." % value, '2.9')
-            return true
-        elif value == false:  # When type=raw, this supports the original boolean values
-            self.module.deprecate("Boolean value '%s' is no longer valid, please use 'no' as a boolean value." % value, '2.9')
-            return false
-        else:  # When type=raw, escalate back to user
-            self.module.fail_json(msg="Boolean value '%s' is an invalid ACI boolean value.")
+
+        # When we expect value is of type=raw, deprecate in Ansible v2.8 (and all modules use type=bool)
+        try:
+            # This supports all Ansible boolean types
+            bool_value = boolean(value)
+            if bool_value is True:
+                return true
+            elif bool_value is False:
+                return false
+        except:
+            # This provides backward compatibility to Ansible v2.4, deprecate in Ansible v2.8
+            if value == true:
+                self.module.deprecate("Boolean value '%s' is no longer valid, please use 'yes' as a boolean value." % value, '2.9')
+                return true
+            elif value == false:
+                self.module.deprecate("Boolean value '%s' is no longer valid, please use 'no' as a boolean value." % value, '2.9')
+                return false
+
+        # If all else fails, escalate back to user
+        self.module.fail_json(msg="Boolean value '%s' is an invalid ACI boolean value.")
 
     def iso8601_format(self, dt):
         ''' Return an ACI-compatible ISO8601 formatted time: 2123-12-12T00:00:00.000+00:00 '''
@@ -370,7 +380,7 @@ class ACIModule(object):
             try:
                 # APIC error
                 self.response_json(info['body'])
-                self.fail_json(msg='Request failed: %(code)s %(text)s' % self.error)
+                self.fail_json(msg='APIC Error %(code)s: %(text)s' % self.error)
             except KeyError:
                 # Connection error
                 self.fail_json(msg='Connection failed for %(url)s. %(msg)s' % info)
@@ -406,7 +416,7 @@ class ACIModule(object):
             try:
                 # APIC error
                 self.response_json(query['body'])
-                self.fail_json(msg='Query failed: %(code)s %(text)s' % self.error)
+                self.fail_json(msg='APIC Error %(code)s: %(text)s' % self.error)
             except KeyError:
                 # Connection error
                 self.fail_json(msg='Connection failed for %(url)s. %(msg)s' % query)
@@ -677,7 +687,7 @@ class ACIModule(object):
                 try:
                     # APIC error
                     self.response_json(info['body'])
-                    self.fail_json(msg='Request failed: %(code)s %(text)s' % self.error)
+                    self.fail_json(msg='APIC Error %(code)s: %(text)s' % self.error)
                 except KeyError:
                     # Connection error
                     self.fail_json(msg='Connection failed for %(url)s. %(msg)s' % info)
@@ -810,7 +820,7 @@ class ACIModule(object):
             try:
                 # APIC error
                 self.response_json(info['body'])
-                self.fail_json(msg='Request failed: %(code)s %(text)s' % self.error)
+                self.fail_json(msg='APIC Error %(code)s: %(text)s' % self.error)
             except KeyError:
                 # Connection error
                 self.fail_json(msg='Connection failed for %(url)s. %(msg)s' % info)
@@ -910,7 +920,7 @@ class ACIModule(object):
                 try:
                     # APIC error
                     self.response_json(info['body'])
-                    self.fail_json(msg='Request failed: %(code)s %(text)s' % self.error)
+                    self.fail_json(msg='APIC Error %(code)s: %(text)s' % self.error)
                 except KeyError:
                     # Connection error
                     self.fail_json(msg='Connection failed for %(url)s. %(msg)s' % info)
@@ -918,7 +928,7 @@ class ACIModule(object):
             self.result['changed'] = True
             self.method = 'POST'
 
-    def exit_json(self):
+    def exit_json(self, **kwargs):
 
         if self.params['output_level'] in ('debug', 'info'):
             self.result['previous'] = self.existing
@@ -947,6 +957,7 @@ class ACIModule(object):
             self.result['sent'] = self.config
             self.result['proposed'] = self.proposed
 
+        self.result.update(**kwargs)
         self.module.exit_json(**self.result)
 
     def fail_json(self, msg, **kwargs):
@@ -954,6 +965,9 @@ class ACIModule(object):
         # Return error information, if we have it
         if self.error['code'] is not None and self.error['text'] is not None:
             self.result['error'] = self.error
+
+        if self.params['output_level'] in ('debug', 'info'):
+            self.result['previous'] = self.existing
 
         # Return the gory details when we need it
         if self.params['output_level'] == 'debug':
@@ -968,6 +982,10 @@ class ACIModule(object):
                 self.result['response'] = self.response
                 self.result['status'] = self.status
                 self.result['url'] = self.url
+
+        if self.params['output_level'] in ('debug', 'info'):
+            self.result['sent'] = self.config
+            self.result['proposed'] = self.proposed
 
         self.result.update(**kwargs)
         self.module.fail_json(msg=msg, **self.result)
