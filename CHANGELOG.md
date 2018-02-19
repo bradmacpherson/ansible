@@ -5,9 +5,13 @@ Ansible Changes By Release
 
 ## 2.6 "Heartbreaker" - ACTIVE DEVELOPMENT
 
+[Porting Guide](http://docs.ansible.com/ansible/devel/porting_guides/porting_guides.html)
+
 ### Major Changes
 
 ### Deprecations (to be removed in 2.10)
+
+See [Porting Guide](http://docs.ansible.com/ansible/devel/porting_guides/porting_guides.html) for more information
 
 ### Minor Changes
 
@@ -20,7 +24,7 @@ Ansible Changes By Release
 
 ## 2.5 "Kashmir" - March 2018 (estimated)
 
-[Porting Guide](http://docs.ansible.com/ansible/devel/porting_guides.html)
+[Porting Guide](https://docs.ansible.com/ansible/devel/porting_guides/porting_guide_2.5.html)
 
 ### Major Changes
 * Removed the previously deprecated 'accelerate' mode and all associated keywords and code.
@@ -56,8 +60,9 @@ Ansible Changes By Release
 * ec2_ami_find has been deprecated, use ec2_ami_facts.
 * panos_security_policy: Use panos_security_rule - the old module uses deprecated API calls
 * vsphere_guest is deprecated in Ansible 2.5 and will be removed in Ansible-2.9. Use vmware_guest module instead.
+* Apstra's ``aos_*`` modules are deprecated. See new modules at [ansible-apstra](https://www.ansible.com/ansible-apstra)
 
-See [Porting Guide](http://docs.ansible.com/ansible/devel/porting_guides.html) for more information
+See [Porting Guide](https://docs.ansible.com/ansible/devel/porting_guides/porting_guide_2.5.html) for more information
 
 ### Minor Changes
 * added a few new magic vars corresponding to configuration/command line options:
@@ -78,6 +83,9 @@ See [Porting Guide](http://docs.ansible.com/ansible/devel/porting_guides.html) f
 * `osx_say` module was renamed into `say`.
 * Task debugger functionality was moved into `StrategyBase`, and extended to allow explicit invocation from use of the `debugger` keyword.
   The `debug` strategy is still functional, and is now just a trigger to enable this functionality
+* The ANSIBLE_REMOTE_TMP environment variable has been added to supplement (and
+  override) ANSIBLE_REMOTE_TEMP.  This matches with the spelling of the config
+  value. ANSIBLE_REMOTE_TEMP will be deprecated in the future.
 
 #### Removed Modules (previously deprecated):
 * accelerate.
@@ -205,6 +213,7 @@ While neither is technically a new plugin, these connections may now be used dir
   * vmware_drs_rule_facts
   * vmware_guest_file_operation
   * vmware_guest_powerstate
+  * vmware_guest_snapshot_facts
   * vmware_host_acceptance
   * vmware_host_config_facts
   * vmware_host_config_manager
