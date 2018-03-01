@@ -18,7 +18,7 @@
 - name: Create a service
   openshift_raw:
     state: present
-    resource_definition:
+    resource_definition: &svc
       apiVersion: v1
       kind: Service
       metadata:
@@ -42,13 +42,15 @@
   debug:
     var: output
 
-- name: Delete an existing PVC
+- name: Create the service again
   openshift_raw:
-    name: web
-    namespace: testing
-    api: v1
-    kind: persistent_volume_claim
-    state: absent
+    state: present
+    resource_definition: *svc 
+  register: output
+  
+- name: Service creation should be idempotent
+  assert:
+    that: not output.changed
 
 - name: Create PVC
   openshift_raw:
@@ -70,27 +72,14 @@
   debug:
     var: output
 
-- name: Create PVC
+- name: Create the PVC again
   openshift_raw:
     state: present
     inline: *pvc
-  register: output
 
-- name: Show output
-  debug:
-    var: output
-
-- name: PVC should be idempotent
+- name: PVC creation should be idempotent
   assert:
     that: not output.changed
-
-- name: Delete an existing deployment config
-  openshift_raw:
-    name: elastic
-    namespace: testing
-    api: v1
-    kind: DeploymentConfig
-    state: absent
 
 - name: Create deployment config
   openshift_raw:
@@ -121,7 +110,7 @@
             volumes:
             - name: elastic-volume
               persistentVolumeClaim:
-              claimName: elastic-volume
+                claimName: elastic-volume
         replicas: 1
         strategy:
           type: Rolling
@@ -130,3 +119,13 @@
 - name: Show output
   debug:
     var: output
+
+- name: Create deployment config again
+  openshift_raw:
+    state: present
+    inline: *dc 
+  register: output
+
+- name: DC creation should be idempotent
+  assert:
+    that: not output.changed

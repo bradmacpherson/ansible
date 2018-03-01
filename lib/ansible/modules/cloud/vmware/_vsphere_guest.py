@@ -29,7 +29,6 @@ options:
       - The hostname of the vcenter server the module will connect to, to create the guest.
     required: true
     default: null
-    aliases: []
   validate_certs:
     description:
       - Validate SSL certs.  Note, if running on python without SSLContext
@@ -39,7 +38,7 @@ options:
         never validate on python <= 2.7.8.
     required: false
     default: yes
-    choices: ['yes', 'no']
+    type: bool
     version_added: 2.1
   guest:
     description:
@@ -83,7 +82,7 @@ options:
       - Specifies if the VM should be deployed from a template (mutually exclusive with 'state' parameter). No guest customization changes to hardware
         such as CPU, RAM, NICs or Disks can be applied when launching from template.
     default: no
-    choices: ['yes', 'no']
+    type: bool
   template_src:
     version_added: "1.9"
     description:
@@ -100,7 +99,7 @@ options:
       - Specifies if the VM should be powered on after the clone.
     required: false
     default: yes
-    choices: ['yes', 'no']
+    type: bool
   vm_disk:
     description:
       - A key, value list of disks and their sizes and which datastore to keep it in.
@@ -113,7 +112,7 @@ options:
     default: null
   vm_nic:
     description:
-      - A key, value list of nics, their types and what network to put them on.
+      - A key, value list of nics, their types and what network to put them on. Optionaly with their MAC address.
     required: false
     default: null
   vm_extra_config:
@@ -131,13 +130,13 @@ options:
   vmware_guest_facts:
     description:
       - Gather facts from vCenter on a particular VM
-    required: false
+    type: bool
     default: null
   force:
     description:
       - Boolean. Allows you to run commands which may alter the running state of a guest. Also used to reconfigure and destroy.
     default: "no"
-    choices: [ "yes", "no" ]
+    type: bool
 
 notes:
   - This module should run from a system that can access vSphere directly.
@@ -467,7 +466,7 @@ def add_floppy(module, s, config_target, config, devices, default_devs, type="im
     devices.append(floppy_spec)
 
 
-def add_nic(module, s, nfmor, config, devices, nic_type="vmxnet3", network_name="VM Network", network_type="standard"):
+def add_nic(module, s, nfmor, config, devices, nic_type="vmxnet3", network_name="VM Network", network_type="standard", mac_address=None):
     # add a NIC
     # Different network card types are: "VirtualE1000",
     # "VirtualE1000e","VirtualPCNet32", "VirtualVmxnet", "VirtualNmxnet2",
@@ -517,7 +516,11 @@ def add_nic(module, s, nfmor, config, devices, nic_type="vmxnet3", network_name=
             msg="Error adding nic backing to vm spec. No network type of:"
             " %s" % (network_type))
 
-    nic_ctlr.set_element_addressType("generated")
+    if mac_address:
+        nic_ctlr.set_element_addressType('manual')
+        nic_ctlr.set_element_macAddress(mac_address)
+    else:
+        nic_ctlr.set_element_addressType("generated")
     nic_ctlr.set_element_backing(nic_backing)
     nic_ctlr.set_element_key(4)
     nic_spec.set_element_device(nic_ctlr)
@@ -1448,9 +1451,10 @@ def create_vm(vsphere_client, module, esxi, resource_pool, cluster_name, guest, 
                 module.fail_json(
                     msg="Error on %s definition. network_type needs to be "
                     " specified." % nic)
+            mac_address = vm_nic[nic]['mac_address'] if 'mac_address' in vm_nic[nic] else None
             # Add the nic to the VM spec.
             add_nic(module, vsphere_client, nfmor, config, devices,
-                    nictype, network, network_type)
+                    nictype, network, network_type, mac_address)
 
     config.set_element_deviceChange(devices)
     create_vm_request.set_element_config(config)

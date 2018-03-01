@@ -61,6 +61,7 @@ options:
     - If this value is not set, VM is created without using a template.
     - If the VM exists already this setting will be ignored.
     - This parameter is case sensitive.
+    aliases: [ 'template_src' ]
   is_template:
     description:
     - Flag the instance as a template.
@@ -108,6 +109,10 @@ options:
           version_added: 2.5'
     - ' - C(cpu_reservation) (integer): The amount of CPU resource that is guaranteed available to the virtual machine.
           Unit is MHz. version_added: 2.5'
+    - ' - C(version) (integer): The Virtual machine hardware versions. Default is 10 (ESXi 5.5 and onwards).
+          Please check VMware documentation for correct virtual machine hardware version.
+          Incorrect hardware version may lead to failure in deployment. If hardware version is already to given version then no action is taken.
+          version_added: 2.6'
 
   guest_id:
     description:
@@ -120,7 +125,7 @@ options:
     - This field is required when creating a VM.
     - >
          Valid values are referenced here:
-         U(https://www.vmware.com/support/developer/converter-sdk/conv55_apireference/vim.vm.GuestOsDescriptor.GuestOsIdentifier.html)
+         U(http://pubs.vmware.com/vsphere-6-5/topic/com.vmware.wssdk.apiref.doc/vim.vm.GuestOsDescriptor.GuestOsIdentifier.html)
     version_added: '2.3'
   disk:
     description:
@@ -156,6 +161,13 @@ options:
     - "vmware-tools needs to be installed on given virtual machine in order to work with this parameter."
     default: 'no'
     type: bool
+  state_change_timeout:
+    description:
+    - If the C(state) is set to C(shutdownguest), by default the module will return immediately after sending the shutdown signal.
+    - If this argument is set to a positive integer, the module will instead wait for the VM to reach the poweredoff state.
+    - The value sets a timeout in seconds for the module to wait for the state change.
+    default: 0
+    version_added: '2.6'
   snapshot_src:
     description:
     - Name of the existing snapshot to use to create a clone of a VM.
@@ -241,6 +253,16 @@ options:
     - ' - C(runonce) (list): List of commands to run at first user logon.'
     - ' - C(timezone) (int): Timezone (See U(https://msdn.microsoft.com/en-us/library/ms912391.aspx)).'
     version_added: '2.3'
+  vapp_properties:
+    description:
+    - A list of vApp properties
+    - 'For full list of attibutes and types refer to: U(https://github.com/vmware/pyvmomi/blob/master/docs/vim/vApp/PropertyInfo.rst)'
+    - 'Basic attributes are:'
+    - ' - C(id) (string): Property id - required'
+    - ' - C(value) (string): Property value'
+    - ' - C(type) (string): Value type, string type by default.'
+    - ' - C(operation): C(remove): This attribute is required only when removing properties'
+    version_added: '2.6'
 extends_documentation_fragment: vmware.documentation
 '''
 
@@ -274,6 +296,7 @@ EXAMPLES = r'''
       hotadd_cpu: True
       hotremove_cpu: True
       hotadd_memory: False
+      version: 12 # Hardware version of VM
     cdrom:
       type: iso
       iso_path: "[datastore1] livecd.iso"
@@ -359,6 +382,22 @@ EXAMPLES = r'''
     uuid: 421e4592-c069-924d-ce20-7e7533fab926
     state: absent
   delegate_to: localhost
+
+- name: Manipulate vApp properties
+  vmware_guest:
+    hostname: 192.168.1.209
+    username: administrator@vsphere.local
+    password: vmware
+    name: vm_name
+    state: present
+    vapp_properties:
+      - id: remoteIP
+        category: Backup
+        label: Backup server IP
+        type: string
+        value: 10.10.10.1
+      - id: old_property
+        operation: remove
 '''
 
 RETURN = r'''
@@ -846,9 +885,9 @@ class PyVmomiHelper(PyVmomi):
         Args:
             vm_obj: virtual machine object
         """
-        # maxMksConnections == max_connections
         if 'hardware' in self.params:
             if 'max_connections' in self.params['hardware']:
+                # maxMksConnections == max_connections
                 self.configspec.maxMksConnections = int(self.params['hardware']['max_connections'])
                 if vm_obj is None or self.configspec.maxMksConnections != vm_obj.config.hardware.maxMksConnections:
                     self.change_detected = True
@@ -857,6 +896,46 @@ class PyVmomiHelper(PyVmomi):
                 self.configspec.nestedHVEnabled = bool(self.params['hardware']['nested_virt'])
                 if vm_obj is None or self.configspec.nestedHVEnabled != bool(vm_obj.config.nestedHVEnabled):
                     self.change_detected = True
+
+            if 'version' in self.params['hardware']:
+                hw_version_check_failed = False
+                temp_version = self.params['hardware'].get('version', 10)
+                try:
+                    temp_version = int(temp_version)
+                except ValueError:
+                    hw_version_check_failed = True
+
+                if temp_version not in range(3, 15):
+                    hw_version_check_failed = True
+
+                if hw_version_check_failed:
+                    self.module.fail_json(msg="Failed to set hardware.version '%s' value as valid"
+                                              " values range from 3 (ESX 2.x) to 14 (ESXi 6.5 and greater)." % temp_version)
+                # Hardware version is denoted as "vmx-10"
+                version = "vmx-%02d" % temp_version
+                self.configspec.version = version
+                if vm_obj is None or self.configspec.version != vm_obj.config.version:
+                    self.change_detected = True
+                if vm_obj is not None:
+                    # VM exists and we need to update the hardware version
+                    current_version = vm_obj.config.version
+                    # current_version = "vmx-10"
+                    version_digit = int(current_version.split("-", 1)[-1])
+                    if temp_version < version_digit:
+                        self.module.fail_json(msg="Current hardware version '%d' which is greater than the specified"
+                                                  " version '%d'. Downgrading hardware version is"
+                                                  " not supported. Please specify version greater"
+                                                  " than the current version." % (version_digit,
+                                                                                  temp_version))
+                    new_version = "vmx-%02d" % temp_version
+                    try:
+                        task = vm_obj.UpgradeVM_Task(new_version)
+                        self.wait_for_task(task)
+                        if task.info.state != 'error':
+                            self.change_detected = True
+                    except vim.fault.AlreadyUpgraded:
+                        # Don't fail if VM is already upgraded.
+                        pass
 
     def get_vm_cdrom_device(self, vm=None):
         if vm is None:
@@ -1052,6 +1131,86 @@ class PyVmomiHelper(PyVmomi):
                 self.configspec.deviceChange.append(nic)
                 self.change_detected = True
 
+    def configure_vapp_properties(self, vm_obj):
+        if len(self.params['vapp_properties']) == 0:
+            return
+
+        for x in self.params['vapp_properties']:
+            if not x.get('id'):
+                self.module.fail_json(msg="id is required to set vApp property")
+
+        new_vmconfig_spec = vim.vApp.VmConfigSpec()
+
+        # This is primarily for vcsim/integration tests, unset vAppConfig was not seen on my deployments
+        orig_spec = vm_obj.config.vAppConfig if vm_obj.config.vAppConfig else new_vmconfig_spec
+
+        vapp_properties_current = dict((x.id, x) for x in orig_spec.property)
+        vapp_properties_to_change = dict((x['id'], x) for x in self.params['vapp_properties'])
+
+        # each property must have a unique key
+        # init key counter with max value + 1
+        all_keys = [x.key for x in orig_spec.property]
+        new_property_index = max(all_keys) + 1 if all_keys else 0
+
+        for property_id, property_spec in vapp_properties_to_change.items():
+            is_property_changed = False
+            new_vapp_property_spec = vim.vApp.PropertySpec()
+
+            if property_id in vapp_properties_current:
+                if property_spec.get('operation') == 'remove':
+                    new_vapp_property_spec.operation = 'remove'
+                    new_vapp_property_spec.removeKey = vapp_properties_current[property_id].key
+                    is_property_changed = True
+                else:
+                    # this is 'edit' branch
+                    new_vapp_property_spec.operation = 'edit'
+                    new_vapp_property_spec.info = vapp_properties_current[property_id]
+                    try:
+                        for property_name, property_value in property_spec.items():
+
+                            if property_name == 'operation':
+                                # operation is not an info object property
+                                # if set to anything other than 'remove' we don't fail
+                                continue
+
+                            # Updating attributes only if needed
+                            if getattr(new_vapp_property_spec.info, property_name) != property_value:
+                                setattr(new_vapp_property_spec.info, property_name, property_value)
+                                is_property_changed = True
+
+                    except Exception as e:
+                        self.module.fail_json(msg="Failed to set vApp property field='%s' and value='%s'. Error: %s"
+                                              % (property_name, property_value, to_text(e)))
+            else:
+                if property_spec.get('operation') == 'remove':
+                    # attemp to delete non-existent property
+                    continue
+
+                # this is add new property branch
+                new_vapp_property_spec.operation = 'add'
+
+                property_info = vim.vApp.PropertyInfo()
+                property_info.classId = property_spec.get('classId')
+                property_info.instanceId = property_spec.get('instanceId')
+                property_info.id = property_spec.get('id')
+                property_info.category = property_spec.get('category')
+                property_info.label = property_spec.get('label')
+                property_info.type = property_spec.get('type', 'string')
+                property_info.userConfigurable = property_spec.get('userConfigurable', True)
+                property_info.defaultValue = property_spec.get('defaultValue')
+                property_info.value = property_spec.get('value', '')
+                property_info.description = property_spec.get('description')
+
+                new_vapp_property_spec.info = property_info
+                new_vapp_property_spec.info.key = new_property_index
+                new_property_index += 1
+                is_property_changed = True
+            if is_property_changed:
+                new_vmconfig_spec.property.append(new_vapp_property_spec)
+        if new_vmconfig_spec.property:
+            self.configspec.vAppConfig = new_vmconfig_spec
+            self.change_detected = True
+
     def customize_customvalues(self, vm_obj, config_spec):
         if len(self.params['customvalues']) == 0:
             return
@@ -1210,28 +1369,45 @@ class PyVmomiHelper(PyVmomi):
     def get_configured_disk_size(self, expected_disk_spec):
         # what size is it?
         if [x for x in expected_disk_spec.keys() if x.startswith('size_') or x == 'size']:
-            # size_tb, size_gb, size_mb, size_kb, size_b ...?
+            # size, size_tb, size_gb, size_mb, size_kb
             if 'size' in expected_disk_spec:
-                expected = ''.join(c for c in expected_disk_spec['size'] if c.isdigit())
-                unit = expected_disk_spec['size'].replace(expected, '').lower()
-                expected = int(expected)
+                size_regex = re.compile(r'(\d+(?:\.\d+)?)([tgmkTGMK][bB])')
+                disk_size_m = size_regex.match(expected_disk_spec['size'])
+                try:
+                    if disk_size_m:
+                        expected = disk_size_m.group(1)
+                        unit = disk_size_m.group(2)
+                    else:
+                        raise ValueError
+
+                    if re.match(r'\d+\.\d+', expected):
+                        # We found float value in string, let's typecast it
+                        expected = float(expected)
+                    else:
+                        # We found int value in string, let's typecast it
+                        expected = int(expected)
+
+                    if not expected or not unit:
+                        raise ValueError
+
+                except (TypeError, ValueError, NameError):
+                    # Common failure
+                    self.module.fail_json(msg="Failed to parse disk size please review value"
+                                              " provided using documentation.")
             else:
                 param = [x for x in expected_disk_spec.keys() if x.startswith('size_')][0]
                 unit = param.split('_')[-1].lower()
                 expected = [x[1] for x in expected_disk_spec.items() if x[0].startswith('size_')][0]
                 expected = int(expected)
 
-            if unit == 'tb':
-                return expected * 1024 * 1024 * 1024
-            elif unit == 'gb':
-                return expected * 1024 * 1024
-            elif unit == 'mb':
-                return expected * 1024
-            elif unit == 'kb':
-                return expected
-
-            self.module.fail_json(
-                msg='%s is not a supported unit for disk size. Supported units are kb, mb, gb or tb' % unit)
+            disk_units = dict(tb=3, gb=2, mb=1, kb=0)
+            if unit in disk_units:
+                unit = unit.lower()
+                return expected * (1024 ** disk_units[unit])
+            else:
+                self.module.fail_json(msg="%s is not a supported unit for disk size."
+                                          " Supported units are ['%s']." % (unit,
+                                                                            "', '".join(disk_units.keys())))
 
         # No size found but disk, fail
         self.module.fail_json(
@@ -1761,6 +1937,7 @@ class PyVmomiHelper(PyVmomi):
         self.configure_cdrom(vm_obj=self.current_vm_obj)
         self.customize_customvalues(vm_obj=self.current_vm_obj, config_spec=self.configspec)
         self.configure_resource_alloc_info(vm_obj=self.current_vm_obj)
+        self.configure_vapp_properties(vm_obj=self.current_vm_obj)
 
         if self.params['annotation'] and self.current_vm_obj.config.annotation != self.params['annotation']:
             self.configspec.annotation = str(self.params['annotation'])
@@ -1887,11 +2064,13 @@ def main():
         esxi_hostname=dict(type='str'),
         cluster=dict(type='str'),
         wait_for_ip_address=dict(type='bool', default=False),
+        state_change_timeout=dict(type='int', default=0),
         snapshot_src=dict(type='str'),
         linked_clone=dict(type='bool', default=False),
         networks=dict(type='list', default=[]),
         resource_pool=dict(type='str'),
         customization=dict(type='dict', default={}, no_log=True),
+        vapp_properties=dict(type='list', default=[]),
     )
 
     module = AnsibleModule(argument_spec=argument_spec,
@@ -1946,7 +2125,7 @@ def main():
                 )
                 module.exit_json(**result)
             # set powerstate
-            tmp_result = set_vm_power_state(pyv.content, vm, module.params['state'], module.params['force'])
+            tmp_result = set_vm_power_state(pyv.content, vm, module.params['state'], module.params['force'], module.params['state_change_timeout'])
             if tmp_result['changed']:
                 result["changed"] = True
             if not tmp_result["failed"]:

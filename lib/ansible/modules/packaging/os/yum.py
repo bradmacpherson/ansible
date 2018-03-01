@@ -316,7 +316,7 @@ def ensure_yum_utils(module):
 def fetch_rpm_from_url(spec, module=None):
     # download package so that we can query it
     package_name, _ = os.path.splitext(str(spec.rsplit('/', 1)[1]))
-    package_file = tempfile.NamedTemporaryFile(prefix=package_name, suffix='.rpm', delete=False)
+    package_file = tempfile.NamedTemporaryFile(dir=getattr(module, 'tmpdir', None), prefix=package_name, suffix='.rpm', delete=False)
     module.add_cleanup_file(package_file.name)
     try:
         rsp, info = fetch_url(module, spec)
@@ -347,7 +347,7 @@ def is_group_env_installed(name, conf_file, installroot='/'):
     name_lower = name.lower()
 
     my = yum_base(conf_file, installroot)
-    if yum.__version__ >= '3.4':
+    if yum.__version_info__ >= (3, 4):
         groups_list = my.doGroupLists(return_evgrps=True)
     else:
         groups_list = my.doGroupLists()
@@ -358,7 +358,7 @@ def is_group_env_installed(name, conf_file, installroot='/'):
         if name_lower.endswith(group.name.lower()) or name_lower.endswith(group.groupid.lower()):
             return True
 
-    if yum.__version__ >= '3.4':
+    if yum.__version_info__ >= (3, 4):
         # list of the installed env_groups on the third index
         envs = groups_list[2]
         for env in envs:

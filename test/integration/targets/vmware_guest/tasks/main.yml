@@ -13,9 +13,8 @@
     vcsim: "{{ lookup('env', 'vcenter_host') }}"
 - debug: var=vcsim
 
-# Commenting following two is failing right now - 15 Dec 2017
-#- include: poweroff_d1_c1_f0.yml
-#- include: poweroff_d1_c1_f1.yml
+- include: poweroff_d1_c1_f0.yml
+- include: poweroff_d1_c1_f1.yml
 - include: check_mode.yml
 - include: clone_d1_c1_f0.yml
 - include: create_d1_c1_f0.yml
@@ -31,3 +30,5 @@
 # Currently, VCSIM doesn't support DVPG (as portkeys are not available) so commenting this test
 #- include: network_with_dvpg.yml
 #- include: template_d1_c1_f0.yml
+- include: vapp_d1_c1_f0.yml
+- include: disk_size_d1_c1_f0.yml

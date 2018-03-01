@@ -14,17 +14,17 @@ ANSIBLE_METADATA = {'metadata_version': '1.1',
 DOCUMENTATION = r'''
 ---
 module: aci_domain_to_encap_pool
-short_description: Bind Domain to Encap Pools on Cisco ACI fabrics (infra:RsVlanNs)
+short_description: Bind Domain to Encap Pools (infra:RsVlanNs)
 description:
 - Bind Domain to Encap Pools on Cisco ACI fabrics.
-- More information from the internal APIC class I(infra:RsVlanNs) at
+notes:
+- The C(domain) and C(encap_pool) parameters should exist before using this module.
+  The M(aci_domain) and M(aci_encap_pool) can be used for these.
+- More information about the internal APIC class B(infra:RsVlanNs) at
   U(https://developer.cisco.com/docs/apic-mim-ref/).
 author:
 - Dag Wieers (@dagwieers)
 version_added: '2.5'
-notes:
-- The C(domain) and C(encap_pool) parameters should exist before using this module.
-  The M(aci_domain) and M(aci_encap_pool) can be used for these.
 options:
   domain:
     description:
@@ -64,7 +64,52 @@ options:
 extends_documentation_fragment: aci
 '''
 
-EXAMPLES = r''' # '''
+EXAMPLES = r'''
+- name: Add domain to VLAN pool binding
+  aci_domain_to_encap_pool:
+    host: apic
+    username: admin
+    password: SomeSecretPassword
+    domain: phys_dom
+    domain_type: phys
+    pool: test_pool
+    pool_type: vlan
+    pool_allocation_mode: dynamic
+    state: present
+
+- name: Remove domain to VLAN pool binding
+  aci_domain_to_encap_pool:
+    host: apic
+    username: admin
+    password: SomeSecretPassword
+    domain: phys_dom
+    domain_type: phys
+    pool: test_pool
+    pool_type: vlan
+    pool_allocation_mode: dynamic
+    state: absent
+
+- name: Query our domain to VLAN pool binding
+  aci_domain_to_encap_pool:
+    host: apic
+    username: admin
+    password: SomeSecretPassword
+    domain: phys_dom
+    pool: test_pool
+    pool_type: vlan
+    pool_allocation_mode: dynamic
+    state: query
+
+- name: Query all domain to VLAN pool bindings
+  aci_domain_to_encap_pool:
+    host: apic
+    username: admin
+    password: SomeSecretPassword
+    domain_type: phys
+    pool_type: vlan
+    pool_allocation_mode: dynamic
+    state: query
+'''
 
 RETURN = r'''
 current:
