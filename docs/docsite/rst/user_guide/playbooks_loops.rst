@@ -1,3 +1,5 @@
+.. _playbooks_loops:
+
 Loops
 =====
 
@@ -70,8 +72,23 @@ If you have a list of hashes, you can reference subkeys using things like::
         - { name: 'testuser1', groups: 'wheel' }
         - { name: 'testuser2', groups: 'root' }
 
-Also be aware that when combining :ref:`when: playbooks_conditionals` with a loop, the ``when:`` statement is processed separately for each item.
+Also be aware that when combining :doc:`playbooks_conditionals` with a loop, the ``when:`` statement is processed separately for each item.
 See :ref:`the_when_statement` for an example.
+
+To loop over a dict, use the ``dict2items`` :ref:`dict_filter`::
+
+    - name: create a tag dictionary of non-empty tags
+      set_fact:
+        tags_dict: "{{ (tags_dict|default({}))|combine({item.key: item.value}) }}"
+      with_items: "{{ tags|dict2items }}"
+      vars:
+        tags:
+          Environment: dev
+          Application: payment
+          Another: "{{ doesnotexist|default() }}"
+      when: item.value != ""
+
+Here, we don't want to set empty tags, so we create a dictionary containing only non-empty tags.
 
 
 .. _complex_loops:
@@ -89,10 +106,6 @@ For example, using the 'nested' lookup, you can combine lists::
         append_privs: yes
         password: "foo"
       loop: "{{ lookup('nested', [ 'alice', 'bob' ], [ 'clientdb', 'employeedb', 'providerdb' ]) }}"
-
-
-:doc:`Jinja2 lookups playbooks_lookups`, :doc:`filters playbooks_filters` and :doc:`tests playbooks_tests`
-make for some powerful data generation and manipulation.
 
 .. note:: ``with_`` loops are actually a combination of things ``with_`` + ``lookup()``, even ``items`` is a lookup. ``loop`` can be used in the same way as shown above.
 
@@ -193,7 +206,7 @@ During iteration, the result of the current item will be placed in the variable:
 Looping over the inventory
 ``````````````````````````
 
-If you wish to loop over the inventory, or just a subset of it, there is multiple ways.
+If you wish to loop over the inventory, or just a subset of it, there are multiple ways.
 One can use a regular ``loop`` with the ``ansible_play_batch`` or ``groups`` variables, like this::
 
     # show all the hosts in the inventory
@@ -211,12 +224,12 @@ There is also a specific lookup plugin ``inventory_hostnames`` that can be used 
     # show all the hosts in the inventory
     - debug:
         msg: "{{ item }}"
-      loop: "{{lookup('inventory_hostnames', 'all'}}"
+      loop: "{{ lookup('inventory_hostnames', 'all') }}"
 
     # show all the hosts matching the pattern, ie all but the group www
     - debug:
         msg: "{{ item }}"
-      loop: "{{lookup('inventory_hostnames', 'all!www'}}"
+      loop: "{{ lookup('inventory_hostnames', 'all!www') }}"
 
 More information on the patterns can be found on :doc:`intro_patterns`
 
@@ -287,7 +300,7 @@ Another option to loop control is ``pause``, which allows you to control the tim
       loop_control:
         pause: 3
 
-.. versionadded:: 2.7
+.. versionadded:: 2.5
 
 If you need to keep track of where you are in a loop, you can use the ``index_var`` option to loop control to specify a variable name to contain the current loop index.::
 

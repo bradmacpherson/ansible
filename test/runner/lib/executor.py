@@ -45,7 +45,6 @@ from lib.util import (
     make_dirs,
     is_shippable,
     is_binary_file,
-    find_pip,
     find_executable,
     raw_command,
     get_coverage_path,
@@ -140,6 +139,9 @@ def install_command_requirements(args):
     if not args.requirements:
         return
 
+    if isinstance(args, ShellConfig):
+        return
+
     packages = []
 
     if isinstance(args, TestConfig):
@@ -148,7 +150,7 @@ def install_command_requirements(args):
         if args.junit:
             packages.append('junit-xml')
 
-    pip = find_pip(version=args.python_version)
+    pip = args.pip_command
 
     commands = [generate_pip_install(pip, args.command, packages=packages)]
 
@@ -180,7 +182,7 @@ def install_command_requirements(args):
 def run_pip_commands(args, pip, commands, detect_pip_changes=False):
     """
     :type args: EnvironmentConfig
-    :type pip: str
+    :type pip: list[str]
     :type commands: list[list[str]]
     :type detect_pip_changes: bool
     :rtype: list[list[str]]
@@ -207,7 +209,7 @@ def run_pip_commands(args, pip, commands, detect_pip_changes=False):
             # AttributeError: 'Requirement' object has no attribute 'project_name'
             # See: https://bugs.launchpad.net/ubuntu/xenial/+source/python-pip/+bug/1626258
             # Upgrading pip works around the issue.
-            run_command(args, [pip, 'install', '--upgrade', 'pip'])
+            run_command(args, pip + ['install', '--upgrade', 'pip'])
             run_command(args, cmd)
 
         after_list = pip_list(args, pip) if detect_pip_changes else None
@@ -221,10 +223,10 @@ def run_pip_commands(args, pip, commands, detect_pip_changes=False):
 def pip_list(args, pip):
     """
     :type args: EnvironmentConfig
-    :type pip: str
+    :type pip: list[str]
     :rtype: str
     """
-    stdout, _ = run_command(args, [pip, 'list'], capture=True)
+    stdout, _ = run_command(args, pip + ['list'], capture=True)
     return stdout
 
 
@@ -235,12 +237,12 @@ def generate_egg_info(args):
     if os.path.isdir('lib/ansible.egg-info'):
         return
 
-    run_command(args, ['python%s' % args.python_version, 'setup.py', 'egg_info'], capture=args.verbosity < 3)
+    run_command(args, [args.python_executable, 'setup.py', 'egg_info'], capture=args.verbosity < 3)
 
 
 def generate_pip_install(pip, command, packages=None):
     """
-    :type pip: str
+    :type pip: list[str]
     :type command: str
     :type packages: list[str] | None
     :rtype: list[str] | None
@@ -259,7 +261,7 @@ def generate_pip_install(pip, command, packages=None):
     if not options:
         return None
 
-    return [pip, 'install', '--disable-pip-version-check', '-c', constraints] + options
+    return pip + ['install', '--disable-pip-version-check', '-c', constraints] + options
 
 
 def command_shell(args):
@@ -720,6 +722,9 @@ def command_integration_filtered(args, targets, all_targets):
                 tries -= 1
 
                 try:
+                    if cloud_environment:
+                        cloud_environment.setup_once()
+
                     run_setup_targets(args, test_dir, target.setup_once, all_targets_dict, setup_targets_executed, False)
 
                     start_time = time.time()
@@ -808,12 +813,12 @@ def command_integration_filtered(args, targets, all_targets):
 
 def run_setup_targets(args, test_dir, target_names, targets_dict, targets_executed, always):
     """
-    :param args: IntegrationConfig
-    :param test_dir: str
-    :param target_names: list[str]
-    :param targets_dict: dict[str, IntegrationTarget]
-    :param targets_executed: set[str]
-    :param always: bool
+    :type args: IntegrationConfig
+    :type test_dir: str
+    :type target_names: list[str]
+    :type targets_dict: dict[str, IntegrationTarget]
+    :type targets_executed: set[str]
+    :type always: bool
     """
     for target_name in target_names:
         if not always and target_name in targets_executed:
@@ -1178,23 +1183,23 @@ def get_integration_local_filter(args, targets):
     """
     exclude = []
 
-    if os.getuid() != 0:
+    if not args.allow_root and os.getuid() != 0:
         skip = 'needs/root/'
         skipped = [target.name for target in targets if skip in target.aliases]
         if skipped:
             exclude.append(skip)
-            display.warning('Excluding tests marked "%s" which require running as root: %s'
+            display.warning('Excluding tests marked "%s" which require --allow-root or running as root: %s'
                             % (skip.rstrip('/'), ', '.join(skipped)))
 
-    # consider explicit testing of destructive as though --allow-destructive was given
-    include_destructive = any(target.startswith('destructive/') for target in args.include)
+    override_destructive = set(target for target in args.include if target.startswith('destructive/'))
 
-    if not args.allow_destructive and not include_destructive:
+    if not args.allow_destructive:
         skip = 'destructive/'
-        skipped = [target.name for target in targets if skip in target.aliases]
+        override = [target.name for target in targets if override_destructive & set(target.aliases)]
+        skipped = [target.name for target in targets if skip in target.aliases and target.name not in override]
         if skipped:
-            exclude.append(skip)
-            display.warning('Excluding tests marked "%s" which require --allow-destructive to run locally: %s'
+            exclude.extend(skipped)
+            display.warning('Excluding tests marked "%s" which require --allow-destructive or prefixing with "destructive/" to run locally: %s'
                             % (skip.rstrip('/'), ', '.join(skipped)))
 
     if args.python_version.startswith('3'):
@@ -1228,12 +1233,14 @@ def get_integration_docker_filter(args, targets):
             display.warning('Excluding tests marked "%s" which require --docker-privileged to run under docker: %s'
                             % (skip.rstrip('/'), ', '.join(skipped)))
 
+    docker_image = args.docker.split('@')[0]  # strip SHA for proper tag comparison
+
     python_version = 2  # images are expected to default to python 2 unless otherwise specified
 
-    if args.docker.endswith('py3'):
+    if docker_image.endswith('py3'):
         python_version = 3  # docker images ending in 'py3' are expected to default to python 3
 
-    if args.docker.endswith(':default'):
+    if docker_image.endswith(':default'):
         python_version = 3  # docker images tagged 'default' are expected to default to python 3
 
     if args.python:  # specifying a numeric --python option overrides the default python

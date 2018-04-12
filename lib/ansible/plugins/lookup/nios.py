@@ -38,16 +38,10 @@ options:
       required: True
     return_fields:
       description: The list of field names to return for the specified object.
-      required: False
-      default: null
     filter:
       description: a dict object that is used to filter the return objects
-      required: False
-      default: null
     extattrs:
       description: a dict object that is used to filter on extattrs
-      required: false
-      default: null
 """
 
 EXAMPLES = """
@@ -57,7 +51,7 @@ EXAMPLES = """
 
 - name: fetch the default dns view
   set_fact:
-    dns_views: "{{ lookup('nios', 'view', filter={'view': 'default'}, provider={'host': 'nios01', 'username': 'admin', 'password': 'password'}) }}"
+    dns_views: "{{ lookup('nios', 'view', filter={'name': 'default'}, provider={'host': 'nios01', 'username': 'admin', 'password': 'password'}) }}"
 
 # all of the examples below use credentials that are  set using env variables
 # export INFOBLOX_HOST=nios01

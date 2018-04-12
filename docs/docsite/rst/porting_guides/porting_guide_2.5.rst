@@ -27,8 +27,7 @@ static ``import_*`` would be inherited by the tasks within.
 
 This separation was only partially implemented in Ansible version 2.4. As of Ansible version 2.5, this work is complete and the separation now behaves as designed; attributes applied to an ``include_*`` task will not be inherited by the tasks within.
 
-To achieve an outcome similar to how Ansible worked prior to version 2.5, playbooks
-should use an explicit application of the attribute on the needed tasks, or use blocks to apply the attribute to many tasks. Another option is to use a static ``import_*`` when possible instead of a dynamic task.
+To achieve an outcome similar to how Ansible worked prior to version 2.5, playbooks should use an explicit application of the attribute on the needed tasks, or use blocks to apply the attribute to many tasks. Another option is to use a static ``import_*`` when possible instead of a dynamic task.
 
 **OLD** In Ansible 2.4:
 
@@ -38,6 +37,17 @@ should use an explicit application of the attribute on the needed tasks, or use 
       tags:
         - distro_include
 
+Included file:
+
+.. code-block:: yaml
+
+    - block:
+        - debug:
+            msg: "In included file"
+
+        - apt:
+            name: nginx
+            state: latest
 
 **NEW** In Ansible 2.5:
 
@@ -63,6 +73,8 @@ Included file:
       tags:
         - distro_include
 
+The relevant change in those examples is, that in Ansible 2.5, the included file defines the tag ``distro_include`` again. The tag is not inherited automatically.
+
 Deprecated
 ==========
 
@@ -71,7 +83,7 @@ Jinja tests used as filters
 
 Using Ansible-provided jinja tests as filters will be removed in Ansible 2.9.
 
-Prior to Ansible 2.5, jinja tests included within Ansible were most often used as filters. The large difference in use is that filters are referenced as ``variable | filter_name`` where as jinja tests are refereced as ``variable is test_name``.
+Prior to Ansible 2.5, jinja tests included within Ansible were most often used as filters. The large difference in use is that filters are referenced as ``variable | filter_name`` while jinja tests are referenced as ``variable is test_name``.
 
 Jinja tests are used for comparisons, while filters are used for data manipulation and have different applications in jinja. This change is to help differentiate the concepts for a better understanding of jinja, and where each can be appropriately used.
 
@@ -99,7 +111,7 @@ In addition to the deprecation warnings, many new tests have been introduced tha
 
     when: result is successful
 
-See :doc:`playbooks_tests` for more information.
+See :ref:`playbook_tests` for more information.
 
 Additionally, a script was created to assist in the conversion for tests using filter syntax to proper jinja test syntax. This script has been used to convert all of the Ansible integration tests to the correct format. There are a few limitations documented, and all changes made by this script should be evaluated for correctness before executing the modified playbooks. The script can be found at `https://github.com/ansible/ansible/blob/devel/hacking/fix_test_syntax.py <https://github.com/ansible/ansible/blob/devel/hacking/fix_test_syntax.py>`_.
 
@@ -135,7 +147,7 @@ The following modules no longer exist:
 Deprecation notices
 -------------------
 
-The following modules will be removed in Ansible 2.9. Please update update your playbooks accordingly.
+The following modules will be removed in Ansible 2.9. Please update your playbooks accordingly.
 
 * Apstra's ``aos_*`` modules are deprecated as they do not work with AOS 2.1 or higher. See new modules at `https://github.com/apstra <https://github.com/apstra>`_.
 * :ref:`nxos_ip_interface <nxos_ip_interface>` use :ref:`nxos_l3_interface <nxos_l3_interface>` instead.
@@ -181,25 +193,39 @@ Shell plugins have been migrated to the new plugin configuration framework. It i
 
 For example, ``system_temps`` is a new setting that allows you to control what Ansible will consider a 'system temporary dir'. This is used when escalating privileges for a non-administrative user. Previously this was hardcoded to '/tmp', which some systems cannot use for privilege escalation. This setting now defaults to ``[ '/var/tmp', '/tmp']``.
 
-Another new setting is ``admin_users`` which allows you to specify a list of users to be considered 'administrators'. Previouslu this was hardcoded to ``root``. It now it defaults to ``[root, toor, admin]``.  This information is used when choosing between your ``remote_temp`` and ``system_temps`` directory.
+Another new setting is ``admin_users`` which allows you to specify a list of users to be considered 'administrators'. Previously this was hardcoded to ``root``. It now it defaults to ``[root, toor, admin]``.  This information is used when choosing between your ``remote_temp`` and ``system_temps`` directory.
 
 For a full list, check the shell plugin you are using, the default shell plugin is ``sh``.
 
 Those that had to work around the global configuration limitations can now migrate to a per host/group settings,
 but also note that the new defaults might conflict with existing usage if the assumptions don't correlate to your environment.
 
+Filter
+------
+
+The lookup plugin API now throws an error if a non-iterable value is returned from a plugin. Previously, numbers or
+other non-iterable types returned by a plugin were accepted without error or warning. This change was made because plugins should always return a list. Please note that plugins that return strings and other non-list iterable values will not throw an error, but may cause unpredictable behavior. If you have a custom lookup plugin that does not return a list, you should modify it to wrap the return values in a list.
 
 Porting custom scripts
 ======================
 
 No notable changes.
 
-Networking
-==========
+Network
+=======
 
+Expanding documentation
+-----------------------
 
-Change in deprecation notice of top-level connection arguments
---------------------------------------------------------------
+We're expanding the network documentation. There's new content and a :ref:`new Ansible Network landing page<network_guide>`. We will continue to build the network-related documentation moving forward.
+
+Top-level connection arguments will be removed in 2.9
+-----------------------------------------------------
+
+Top-level connection arguments like ``username``, ``host``, and ``password`` are deprecated and will be removed in version 2.9.
+
+**OLD** In Ansible < 2.4
+
 .. code-block:: yaml
 
     - name: example of using top-level options for connection properties
@@ -211,19 +237,7 @@ Change in deprecation notice of top-level connection arguments
         authorize: yes
         auth_pass: cisco
 
-**OLD** In Ansible 2.4:
-
-Will result in:
-
-.. code-block:: yaml
-
-   [WARNING]: argument username has been deprecated and will be removed in a future version
-   [WARNING]: argument host has been deprecated and will be removed in a future version
-   [WARNING]: argument password has been deprecated and will be removed in a future version
-
-
-**NEW** In Ansible 2.5:
-
+The deprecation warnings reflect this schedule. The task above, run in Ansible 2.5, will result in:
 
 .. code-block:: yaml
 
@@ -234,13 +248,51 @@ Will result in:
    [DEPRECATION WARNING]: Param 'host' is deprecated. See the module docs for more information. This feature will be removed in version 2.9.
    Deprecation warnings can be disabled by setting deprecation_warnings=False in ansible.cfg.
 
-Notice when using provider dictionary with new persistent connection types
---------------------------------------------------------------------------
+We recommend using the new connection types ``network_cli`` and ``netconf`` (see below), using standard Ansible connection properties, and setting those properties in inventory by group. As you update your playbooks and inventory files, you can easily make the change to ``become`` for privilege escalation (on platforms that support it). For more information, see the :ref:`using become with network modules<become-network>` guide and the :ref:`platform documentation<platform_options>`.
 
-Using a provider dictionary with one of the new persistent connection types for networking
-(network_cli, netconf, etc.) will result in a warning. When using these connections
-the standard Ansible infrastructure for controlling connections should be used.
-(Link to basic inventory documentation?)
+Adding persistent connection types ``network_cli`` and ``netconf``
+------------------------------------------------------------------
+
+Ansible 2.5 introduces two top-level persistent connection types, ``network_cli`` and ``netconf``. With ``connection: local``, each task passed the connection parameters, which had to be stored in your playbooks. With ``network_cli`` and ``netconf`` the playbook passes the connection parameters once, so you can pass them at the command line if you prefer. We recommend you use ``network_cli`` and ``netconf`` whenever possible.
+Note that eAPI and NX-API still require ``local`` connections with ``provider`` dictionaries. See the :ref:`platform documentation<platform_options>` for more information. Unless you need a ``local`` connection, update your playbooks to use ``network_cli`` or ``netconf`` and to specify your connection variables with standard Ansible connection variables:
+
+**OLD** In Ansible 2.4
+
+.. code-block:: yaml
+
+   ---
+   vars:
+       cli:
+          host: "{{ inventory_hostname }}"
+          username: operator
+          password: secret
+          transport: cli
+
+   tasks:
+   - nxos_config:
+       src: config.j2
+       provider: "{{ cli }}"
+       username: admin
+       password: admin
+
+**NEW** In Ansible 2.5
+
+.. code-block:: ini
+
+   [nxos:vars]
+   ansible_connection=network_cli
+   ansible_network_os=nxos
+   ansible_user=operator
+   ansible_password=secret
+
+.. code-block:: yaml
+
+   tasks:
+   - nxos_config:
+       src: config.j2
+
+Using a provider dictionary with either ``network_cli`` or ``netconf`` will result in a warning.
+
 
 Developers: Shared Module Utilities Moved
 -----------------------------------------
@@ -253,17 +305,17 @@ Beginning with Ansible 2.5, shared module utilities for network modules moved to
 
 If your module uses shared module utilities, you must update all references. For example, change:
 
-OLD In Ansible 2.4
+**OLD** In Ansible 2.4
 
 .. code-block:: python
 
    from ansible.module_utils.vyos import get_config, load_config
 
-NEW In Ansible 2.5
+**NEW** In Ansible 2.5
 
 .. code-block:: python
 
    from ansible.module_utils.network.vyos.vyos import get_config, load_config
 
 
-See the module utilities developer guide see :doc:`dev_guide/developing_module_utilities` for more information.
+See the module utilities developer guide see :ref:`appendix_module_utilities` for more information.

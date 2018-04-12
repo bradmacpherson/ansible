@@ -290,9 +290,10 @@ class Templar:
             self.environment.block_end_string,
             self.environment.variable_end_string
         ))
-        self._no_type_regex = re.compile(r'.*\|\s*(?:%s)\s*(?:%s)?$' % ('|'.join(C.STRING_TYPE_FILTERS), self.environment.variable_end_string))
+        self._no_type_regex = re.compile(r'.*?\|\s*(?:%s)(?:\([^\|]*\))?\s*\)?\s*(?:%s)' %
+                                         ('|'.join(C.STRING_TYPE_FILTERS), self.environment.variable_end_string))
 
-    def _get_filters(self):
+    def _get_filters(self, builtin_filters):
         '''
         Returns filter plugins, after loading and caching them if need be
         '''
@@ -300,15 +301,17 @@ class Templar:
         if self._filters is not None:
             return self._filters.copy()
 
-        plugins = [x for x in self._filter_loader.all()]
-
         self._filters = dict()
-        for fp in plugins:
-            self._filters.update(fp.filters())
 
         # TODO: Remove registering tests as filters in 2.9
         for name, func in self._get_tests().items():
+            if name in builtin_filters:
+                # If we have a custom test named the same as a builtin filter, don't register as a filter
+                continue
             self._filters[name] = tests_as_filters_warning(name, func)
+
+        for fp in self._filter_loader.all():
+            self._filters.update(fp.filters())
 
         return self._filters.copy()
 
@@ -320,10 +323,8 @@ class Templar:
         if self._tests is not None:
             return self._tests.copy()
 
-        plugins = [x for x in self._test_loader.all()]
-
         self._tests = dict()
-        for fp in plugins:
+        for fp in self._test_loader.all():
             self._tests.update(fp.tests())
 
         return self._tests.copy()
@@ -615,6 +616,7 @@ class Templar:
         if instance is not None:
             wantlist = kwargs.pop('wantlist', False)
             allow_unsafe = kwargs.pop('allow_unsafe', C.DEFAULT_ALLOW_UNSAFE_LOOKUPS)
+            errors = kwargs.pop('errors', 'strict')
 
             from ansible.utils.listify import listify_lookup_plugin_terms
             loop_terms = listify_lookup_plugin_terms(terms=args, templar=self, loader=self._loader, fail_on_undefined=True, convert_bare=False)
@@ -625,8 +627,14 @@ class Templar:
                 raise AnsibleUndefinedVariable(e)
             except Exception as e:
                 if self._fail_on_lookup_errors:
-                    raise AnsibleError("An unhandled exception occurred while running the lookup plugin '%s'. Error was a %s, "
-                                       "original message: %s" % (name, type(e), e))
+                    msg = u"An unhandled exception occurred while running the lookup plugin '%s'. Error was a %s, original message: %s" % \
+                          (name, type(e), to_text(e))
+                    if errors == 'warn':
+                        display.warning(msg)
+                    elif errors == 'ignore':
+                        display.log(msg)
+                    else:
+                        raise AnsibleError(to_native(msg))
                 ran = None
 
             if ran and not allow_unsafe:
@@ -681,7 +689,7 @@ class Templar:
                     setattr(myenv, key, ast.literal_eval(val.strip()))
 
             # Adds Ansible custom filters and tests
-            myenv.filters.update(self._get_filters())
+            myenv.filters.update(self._get_filters(myenv.filters))
             myenv.tests.update(self._get_tests())
 
             if escape_backslashes:

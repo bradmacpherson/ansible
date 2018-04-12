@@ -1,3 +1,5 @@
+.. _playbooks_filters:
+
 Filters
 -------
 
@@ -158,6 +160,31 @@ To get the symmetric difference of 2 lists (items exclusive to each list)::
 
     {{ list1 | symmetric_difference(list2) }}
 
+
+.. _dict_filter:
+
+Dict Filter
+```````````
+
+.. versionadded:: 2.6
+
+
+To turn a dictionary into a list of items, suitable for looping, use `dict2items`::
+
+    {{ dict | dict2items }}
+
+Which turns::
+
+    tags:
+      Application: payment
+      Environment: dev
+
+into::
+
+    - key: Application
+      value: payment
+    - key: Environment
+      value: dev
 
 .. _random_filter:
 
@@ -917,9 +944,15 @@ This will result in::
 
 To get date object from string use the `to_datetime` filter, (new in version in 2.2)::
 
-    # get amount of seconds between two dates, default date format is %Y-%m-%d %H:%M:%S but you can pass your own one
-    {{ (("2016-08-14 20:00:12"|to_datetime) - ("2015-12-25"|to_datetime('%Y-%m-%d'))).seconds  }}
-
+    # Get total amount of seconds between two dates. Default date format is %Y-%m-%d %H:%M:%S but you can pass your own format
+    {{ (("2016-08-14 20:00:12"|to_datetime) - ("2015-12-25"|to_datetime('%Y-%m-%d'))).total_seconds()  }}
+    
+    # Get remaining seconds after delta has been calculated. NOTE: This does NOT convert years, days, hours, etc to seconds. For that, use total_seconds()
+    {{ (("2016-08-14 20:00:12"|to_datetime) - ("2016-08-14 18:00:00"|to_datetime)).seconds  }}
+    # This expression evaluates to "12" and not "132". Delta is 2 hours, 12 seconds
+    
+    # get amount of days between two dates. This returns only number of days and discards remaining hours, minutes, and seconds
+    {{ (("2016-08-14 20:00:12"|to_datetime) - ("2015-12-25"|to_datetime('%Y-%m-%d'))).days  }}
 
 Combination Filters
 ````````````````````

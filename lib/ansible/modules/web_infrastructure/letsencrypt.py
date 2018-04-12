@@ -23,21 +23,22 @@ description:
    - "Create and renew SSL certificates with Let's Encrypt. Let's Encrypt is a
       free, automated, and open certificate authority (CA), run for the
       public's benefit. For details see U(https://letsencrypt.org). The current
-      implementation supports the http-01, tls-sni-02 and dns-01 challenges."
-   - "To use this module, it has to be executed at least twice. Either as two
-      different tasks in the same run or during multiple runs."
+      implementation supports the http-01 and dns-01 challenges."
+   - "To use this module, it has to be executed twice. Either as two
+      different tasks in the same run or during two runs. Note that the output
+      of the first run needs to be recorded and passed to the second run as the
+      module argument C(data)."
    - "Between these two tasks you have to fulfill the required steps for the
       chosen challenge by whatever means necessary. For http-01 that means
       creating the necessary challenge file on the destination webserver. For
-      dns-01 the necessary dns record has to be created. tls-sni-02 requires
-      you to create a SSL certificate with the appropriate subjectAlternativeNames.
+      dns-01 the necessary dns record has to be created.
       It is I(not) the responsibility of this module to perform these steps."
    - "For details on how to fulfill these challenges, you might have to read through
-      U(https://tools.ietf.org/html/draft-ietf-acme-acme-09#section-8)"
+      U(https://tools.ietf.org/html/draft-ietf-acme-acme-09#section-8).
+      Also, consider the examples provided for this module."
    - "Although the defaults are chosen so that the module can be used with
       the Let's Encrypt CA, the module can be used with any service using the ACME
-      v1 or v2 protocol. I(Warning): ACME v2 support is currently experimental, as
-      the Let's Encrypt production ACME v2 endpoint is still under development."
+      v1 or v2 protocol."
    - "At least one of C(dest) and C(fullchain_dest) must be specified."
 requirements:
   - "python >= 2.6"
@@ -77,6 +78,9 @@ options:
          U(https://letsencrypt.org/docs/staging-environment/)"
       - "The production Let's Encrypt ACME v1 directory URL, which produces properly
          trusted certificates, is U(https://acme-v01.api.letsencrypt.org/directory)."
+      - "The production Let's Encrypt ACME v2 directory URL, which produces properly
+         trusted certificates, including wildcard certificates, is
+         U(https://acme-v02.api.letsencrypt.org/directory)."
     default: https://acme-staging.api.letsencrypt.org/directory
   acme_version:
     description:
@@ -102,11 +106,12 @@ options:
       - "Boolean indicating whether you agree to the terms of service document."
       - "ACME servers can require this to be true."
       - This option will only be used when C(acme_version) is not 1.
-    default: false
+    type: bool
+    default: 'no'
     version_added: "2.5"
   challenge:
     description: The challenge to be performed.
-    choices: [ 'http-01', 'dns-01', 'tls-sni-02']
+    choices: [ 'http-01', 'dns-01']
     default: 'http-01'
   csr:
     description:
@@ -122,9 +127,15 @@ options:
     aliases: ['src']
   data:
     description:
-      - "The data to validate ongoing challenges."
+      - "The data to validate ongoing challenges. This must be specified for
+         the second run of the module only."
       - "The value that must be used here will be provided by a previous use
-         of this module."
+         of this module. See the examples for more details."
+      - "I(Note): the C(data) option was marked as C(no_log) up to
+         Ansible 2.5. From Ansible 2.6 on, it is no longer marked this way
+         as it causes error messages to be come unusable, and C(data) does
+         not contain any information which can be used without having
+         access to the account key or which are not public anyway."
   dest:
     description:
       - "The destination file for the certificate."
@@ -140,8 +151,6 @@ options:
   chain_dest:
     description:
       - If specified, the intermediate certificate will be written to this file.
-    required: false
-    default: null
     aliases: ['chain']
     version_added: 2.5
   remaining_days:
@@ -156,8 +165,8 @@ options:
       - Whether calls to the ACME directory will validate TLS certificates.
       - I(Warning:) Should I(only ever) be set to C(false) for testing purposes,
         for example when testing against a local Pebble server.
-    required: false
-    default: true
+    type: bool
+    default: 'yes'
     version_added: 2.5
   deactivate_authzs:
     description:
@@ -167,8 +176,17 @@ options:
          for a certain amount of time, and can be used to issue certificates
          without having to re-authenticate the domain. This can be a security
          concern. "
-    required: false
-    default: false
+    type: bool
+    default: 'no'
+    version_added: 2.6
+  force:
+    description:
+      - Enforces the execution of the challenge and validation, even if an
+        existing certificate is still valid.
+      - This is especially helpful when having an updated CSR e.g. with
+        additional domains for which a new certificate is desired.
+    type: bool
+    default: 'no'
     version_added: 2.6
 '''
 
@@ -353,10 +371,10 @@ class ModuleFailException(Exception):
     def __init__(self, msg, **args):
         super(ModuleFailException, self).__init__(self, msg)
         self.msg = msg
-        self.args = args
+        self.module_fail_args = args
 
     def do_fail(self, module):
-        module.fail_json(msg=self.msg, **self.args)
+        module.fail_json(msg=self.msg, other=self.module_fail_args)
 
 
 def _lowercase_fetch_url(*args, **kwargs):
@@ -622,40 +640,44 @@ class ACMEAccount(object):
             }
         elif account_key_type == 'ec':
             pub_data = re.search(
-                r"pub:\s*\n\s+04:([a-f0-9\:\s]+?)\nASN1 OID: (\S+)\nNIST CURVE: (\S+)",
+                r"pub:\s*\n\s+04:([a-f0-9\:\s]+?)\nASN1 OID: (\S+)(?:\nNIST CURVE: (\S+))?",
                 to_text(out, errors='surrogate_or_strict'), re.MULTILINE | re.DOTALL)
             if pub_data is None:
                 return 'cannot parse elliptic curve key', {}
             pub_hex = binascii.unhexlify(re.sub(r"(\s|:)", "", pub_data.group(1)).encode("utf-8"))
-            curve = pub_data.group(3).lower()
-            if curve == 'p-256':
+            asn1_oid_curve = pub_data.group(2).lower()
+            nist_curve = pub_data.group(3).lower() if pub_data.group(3) else None
+            if asn1_oid_curve == 'prime256v1' or nist_curve == 'p-256':
                 bits = 256
                 alg = 'ES256'
                 hash = 'sha256'
                 point_size = 32
-            elif curve == 'p-384':
+                curve = 'P-256'
+            elif asn1_oid_curve == 'secp384r1' or nist_curve == 'p-384':
                 bits = 384
                 alg = 'ES384'
                 hash = 'sha384'
                 point_size = 48
-            elif curve == 'p-521':
+                curve = 'P-384'
+            elif asn1_oid_curve == 'secp521r1' or nist_curve == 'p-521':
                 # Not yet supported on Let's Encrypt side, see
                 # https://github.com/letsencrypt/boulder/issues/2217
                 bits = 521
                 alg = 'ES512'
                 hash = 'sha512'
                 point_size = 66
+                curve = 'P-521'
             else:
-                return 'unknown elliptic curve: %s' % curve, {}
+                return 'unknown elliptic curve: %s / %s' % (asn1_oid_curve, nist_curve), {}
             bytes = (bits + 7) // 8
             if len(pub_hex) != 2 * bytes:
-                return 'bad elliptic curve point (%s)' % curve, {}
+                return 'bad elliptic curve point (%s / %s)' % (asn1_oid_curve, nist_curve), {}
             return None, {
                 'type': 'ec',
                 'alg': alg,
                 'jwk': {
                     "kty": "EC",
-                    "crv": curve.upper(),
+                    "crv": curve,
                     "x": nopad_b64(pub_hex[:bytes]),
                     "y": nopad_b64(pub_hex[bytes:]),
                 },
@@ -667,7 +689,7 @@ class ACMEAccount(object):
         '''
         Sends a JWS signed HTTP POST request to the ACME server and returns
         the response as dictionary
-        https://tools.ietf.org/html/draft-ietf-acme-acme-09#section-6.2
+        https://tools.ietf.org/html/draft-ietf-acme-acme-10#section-6.2
         '''
         failed_tries = 0
         while True:
@@ -711,7 +733,10 @@ class ACMEAccount(object):
                 data["header"] = self.jws_header
             data = self.module.jsonify(data)
 
-            resp, info = fetch_url(self.module, url, data=data, method='POST')
+            headers = {
+                'Content-Type': 'application/jose+json',
+            }
+            resp, info = fetch_url(self.module, url, data=data, headers=headers, method='POST')
             result = {}
             try:
                 content = resp.read()
@@ -915,25 +940,10 @@ class ACMEClient(object):
             token = re.sub(r"[^A-Za-z0-9_\-]", "_", challenge['token'])
             keyauthorization = self.account.get_keyauthorization(token)
 
-            # NOTE: tls-sni-01 is not supported by choice
-            # too complex to be useful and tls-sni-02 is an alternative
-            # as soon as it is implemented server side
             if type == 'http-01':
                 # https://tools.ietf.org/html/draft-ietf-acme-acme-09#section-8.3
                 resource = '.well-known/acme-challenge/' + token
                 data[type] = {'resource': resource, 'resource_value': keyauthorization}
-            elif type == 'tls-sni-02':
-                # https://tools.ietf.org/html/draft-ietf-acme-acme-09#section-8.4
-                token_digest = hashlib.sha256(token.encode('utf8')).hexdigest()
-                ka_digest = hashlib.sha256(keyauthorization.encode('utf8')).hexdigest()
-                len_token_digest = len(token_digest)
-                len_ka_digest = len(ka_digest)
-                resource = 'subjectAlternativeNames'
-                value = [
-                    "{0}.{1}.token.acme.invalid".format(token_digest[:len_token_digest // 2], token_digest[len_token_digest // 2:]),
-                    "{0}.{1}.ka.acme.invalid".format(ka_digest[:len_ka_digest // 2], ka_digest[len_ka_digest // 2:]),
-                ]
-                data[type] = {'resource': resource, 'resource_value': value}
             elif type == 'dns-01':
                 # https://tools.ietf.org/html/draft-ietf-acme-acme-09#section-8.5
                 resource = '_acme-challenge'
@@ -971,13 +981,13 @@ class ACMEClient(object):
                 continue
 
             uri = challenge['uri'] if self.version == 1 else challenge['url']
-            token = re.sub(r"[^A-Za-z0-9_\-]", "_", challenge['token'])
-            keyauthorization = self.account.get_keyauthorization(token)
 
-            challenge_response = {
-                "resource": "challenge",
-                "keyAuthorization": keyauthorization,
-            }
+            challenge_response = {}
+            if self.version == 1:
+                token = re.sub(r"[^A-Za-z0-9_\-]", "_", challenge['token'])
+                keyauthorization = self.account.get_keyauthorization(token)
+                challenge_response["resource"] = "challenge"
+                challenge_response["keyAuthorization"] = keyauthorization
             result, info = self.account.send_signed_request(uri, challenge_response)
             if info['status'] not in [200, 202]:
                 raise ModuleFailException("Error validating challenge: CODE: {0} RESULT: {1}".format(info['status'], result))
@@ -1133,10 +1143,12 @@ class ACMEClient(object):
         if info['status'] not in [201]:
             raise ModuleFailException("Error new order: CODE: {0} RESULT: {1}".format(info['status'], result))
 
-        for identifier, auth_uri in zip(result['identifiers'], result['authorizations']):
-            domain = identifier['value']
+        for auth_uri in result['authorizations']:
             auth_data = simple_get(self.module, auth_uri)
             auth_data['uri'] = auth_uri
+            domain = auth_data['identifier']['value']
+            if auth_data.get('wildcard', False):
+                domain = '*.{0}'.format(domain)
             self.authorizations[domain] = auth_data
 
         self.order_uri = info['location']
@@ -1272,15 +1284,16 @@ def main():
             acme_version=dict(required=False, default=1, choices=[1, 2], type='int'),
             agreement=dict(required=False, type='str'),
             terms_agreed=dict(required=False, default=False, type='bool'),
-            challenge=dict(required=False, default='http-01', choices=['http-01', 'dns-01', 'tls-sni-02'], type='str'),
+            challenge=dict(required=False, default='http-01', choices=['http-01', 'dns-01'], type='str'),
             csr=dict(required=True, aliases=['src'], type='path'),
-            data=dict(required=False, no_log=True, default=None, type='dict'),
+            data=dict(required=False, default=None, type='dict'),
             dest=dict(aliases=['cert'], type='path'),
             fullchain_dest=dict(aliases=['fullchain'], type='path'),
             chain_dest=dict(required=False, default=None, aliases=['chain'], type='path'),
             remaining_days=dict(required=False, default=10, type='int'),
             validate_certs=dict(required=False, default=True, type='bool'),
             deactivate_authzs=dict(required=False, default=False, type='bool'),
+            force=dict(required=False, default=False, type='bool'),
         ),
         required_one_of=(
             ['account_key_src', 'account_key_content'],
@@ -1306,7 +1319,8 @@ def main():
             cert_days = get_cert_days(module, module.params['dest'])
         else:
             cert_days = get_cert_days(module, module.params['fullchain_dest'])
-        if cert_days < module.params['remaining_days']:
+
+        if module.params['force'] or cert_days < module.params['remaining_days']:
             # If checkmode is active, base the changed state solely on the status
             # of the certificate file as all other actions (accessing an account, checking
             # the authorization status...) would lead to potential changes of the current

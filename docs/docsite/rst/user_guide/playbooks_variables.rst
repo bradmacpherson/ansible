@@ -1,3 +1,5 @@
+.. _playbooks_variables:
+
 Variables
 =========
 
@@ -148,7 +150,7 @@ Hey Wait, A YAML Gotcha
 ```````````````````````
 
 YAML syntax requires that if you start a value with ``{{ foo }}`` you quote the whole line, since it wants to be
-sure you aren't trying to start a YAML dictionary.  This is covered on the :doc:`YAMLSyntax` page.
+sure you aren't trying to start a YAML dictionary.  This is covered on the :ref:`yaml_syntax` documentation.
 
 This won't work::
 
@@ -179,7 +181,7 @@ To see what information is available, try the following::
 
 This will return a large amount of variable data, which may look like this, as taken from Ansible 1.4 running on a Ubuntu 12.04 system
 
-.. code-block: json
+.. code-block:: json
 
     {
         "ansible_all_ipv4_addresses": [
@@ -459,7 +461,7 @@ For instance, what if you want users to be able to control some aspect about how
 
 If a remotely managed system has an ``/etc/ansible/facts.d`` directory, any files in this directory
 ending in ``.fact``, can be JSON, INI, or executable files returning JSON, and these can supply local facts in Ansible.
-An alternate directory can be specified using the ``fact_path`` play directive.
+An alternate directory can be specified using the ``fact_path`` play keyword.
 
 For instance assume a ``/etc/ansible/facts.d/preferences.fact``::
 
@@ -826,7 +828,7 @@ Variable Precedence: Where Should I Put A Variable?
 ````````````````````````````````````````````````````
 
 A lot of folks may ask about how variables override another.  Ultimately it's Ansible's philosophy that it's better
-you know where to put a variable, and then you have to think about it a lot less.  
+you know where to put a variable, and then you have to think about it a lot less.
 
 Avoid defining the variable "x" in 47 places and then ask the question "which x gets used".
 Why?  Because that's not Ansible's Zen philosophy of doing things.
@@ -839,18 +841,7 @@ a use for it.
 
 If multiple variables of the same name are defined in different places, they get overwritten in a certain order.
 
-.. include:: ../rst_common/ansible_ssh_changes_note.rst
-
-In 1.x, the precedence is as follows (with the last listed variables winning prioritization):
-
- * "role defaults", which lose in priority to everything and are the most easily overridden 
- * variables defined in inventory
- * facts discovered about a system
- * "most everything else" (command line switches, vars in play, included vars, role vars, etc.)
- * connection variables (``ansible_user``, etc.)
- * extra vars (``-e`` in the command line) always win
-
-In Ansible version 2.x, we have made the order of precedence more specific (with the last listed variables winning prioritization):
+Here is the order of precedence from least to greatest (the last listed variables winning prioritization):
 
   * role defaults [1]_
   * inventory file or script group vars [2]_
@@ -871,10 +862,10 @@ In Ansible version 2.x, we have made the order of precedence more specific (with
   * role vars (defined in role/vars/main.yml)
   * block vars (only for tasks in block)
   * task vars (only for the task)
-  * role (and include_role) params
-  * include params
   * include_vars
   * set_facts / registered vars
+  * role (and include_role) params
+  * include params
   * extra vars (always win precedence)
 
 Basically, anything that goes into "role defaults" (the defaults folder inside the role) is the most malleable and easily overridden. Anything in the vars directory of the role overrides previous versions of that variable in namespace.  The idea here to follow is that the more explicit you get in scope, the more precedence it takes with command line ``-e`` extra vars always winning.  Host and/or inventory variables can win over role defaults, but not explicit includes like the vars directory or an ``include_vars`` task.
@@ -895,7 +886,7 @@ Basically, anything that goes into "role defaults" (the defaults folder inside t
           This last one can be superceeded by the user via `ansible_group_priority`, which defaults to 0 for all groups.
 
 
-Another important thing to consider (for all versions) is that connection variables override config, command line and play/role/task specific options and directives.  For example::
+Another important thing to consider (for all versions) is that connection variables override config, command line and play/role/task specific options and keywords.  For example::
 
     ansible -u lola myhost
 
@@ -942,7 +933,7 @@ First off, group variables are powerful.
 
 Site wide defaults should be defined as a ``group_vars/all`` setting.  Group variables are generally placed alongside
 your inventory file.  They can also be returned by a dynamic inventory script (see :doc:`intro_dynamic_inventory`) or defined
-in things like :doc:`tower` from the UI or API::
+in things like :ref:`ansible_tower` from the UI or API::
 
     ---
     # file: /etc/ansible/group_vars/all
@@ -996,7 +987,9 @@ Parameterized roles are useful.
 If you are using a role and want to override a default, pass it as a parameter to the role like so::
 
     roles:
-       - { role: apache, http_port: 8080 }
+       - role: apache
+         vars:
+            http_port: 8080
 
 This makes it clear to the playbook reader that you've made a conscious choice to override some default in the role, or pass in some
 configuration that the role can't assume by itself.  It also allows you to pass something site-specific that isn't really part of the
@@ -1005,10 +998,18 @@ role you are sharing with others.
 This can often be used for things that might apply to some hosts multiple times. For example::
 
     roles:
-       - { role: app_user, name: Ian    }
-       - { role: app_user, name: Terry  }
-       - { role: app_user, name: Graham }
-       - { role: app_user, name: John   }
+       - role: app_user
+         vars:
+            myname: Ian
+       - role: app_user
+         vars:
+           myname: Terry
+       - role: app_user
+         vars:
+           myname: Graham
+       - role: app_user
+         vars:
+           myname: John
 
 In this example, the same role was invoked multiple times.  It's quite likely there was
 no default for 'name' supplied at all.  Ansible can warn you when variables aren't defined -- it's the default behavior in fact.
@@ -1019,9 +1020,11 @@ Generally speaking, variables set in one role are available to others.  This mea
 can set variables in there and make use of them in other roles and elsewhere in your playbook::
 
      roles:
-        - { role: common_settings }
-        - { role: something, foo: 12 }
-        - { role: something_else }
+        - role: common_settings
+        - role: something
+          vars:
+            foo: 12
+        - role: something_else
 
 .. note:: There are some protections in place to avoid the need to namespace variables.
           In the above, variables defined in common_settings are most definitely available to 'something' and 'something_else' tasks, but if

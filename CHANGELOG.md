@@ -14,6 +14,9 @@ Ansible Changes By Release
 See [Porting Guide](http://docs.ansible.com/ansible/devel/porting_guides/porting_guides.html) for more information
 
 ### Minor Changes
+* Removed restriction from protocol in cloudflare_dns module to allow other protocols than tcp and udp to be specified.
+
+* Ansible 2.6 and onwards, `target_id` parameter in `vmware_target_canonical_facts` module is an optional parameter.
 
 #### Removed modules (previously deprecated)
 
@@ -22,6 +25,7 @@ See [Porting Guide](http://docs.ansible.com/ansible/devel/porting_guides/porting
 #### Cloud
 - amazon
   * aws_caller_facts
+  * aws_ses_identity_policy
 
 
 <a id="2.5"></a>
@@ -1215,7 +1219,7 @@ While neither is technically a new plugin, these connections may now be used dir
 
 <a id="2.3.3"></a>
 
-## 2.3.3 "Ramble On" - TBD
+## 2.3.3 "Ramble On" - 2017-12-20
 
 ### Bugfixes
 * Fix alternatives module handlling of non existing options

@@ -9,6 +9,7 @@ import pty
 import time
 import json
 import subprocess
+import sys
 import traceback
 
 from ansible import constants as C
@@ -169,7 +170,7 @@ class TaskExecutor:
             display.debug("done dumping result, returning")
             return res
         except AnsibleError as e:
-            return dict(failed=True, msg=to_text(e, nonstring='simplerepr'))
+            return dict(failed=True, msg=wrap_var(to_text(e, nonstring='simplerepr')))
         except Exception as e:
             return dict(failed=True, msg='Unexpected failure during module execution.', exception=to_text(traceback.format_exc()), stdout='')
         finally:
@@ -232,7 +233,11 @@ class TaskExecutor:
         elif self._task.loop:
             items = templar.template(self._task.loop)
             if not isinstance(items, list):
-                raise AnsibleError("Invalid data passed to 'loop' it requires a list, got this instead: %s" % items)
+                raise AnsibleError(
+                    "Invalid data passed to 'loop', it requires a list, got this instead: %s."
+                    " Hint: If you passed a list/dict of just one element,"
+                    " try adding wantlist=True to your lookup invocation or use q/query instead of lookup." % items
+                )
 
         # now we restore any old job variables that may have been modified,
         # and delete them if they were in the play context vars but not in
@@ -520,6 +525,18 @@ class TaskExecutor:
         # get handler
         self._handler = self._get_action_handler(connection=self._connection, templar=templar)
 
+        # Apply default params for action/module, if present
+        # These are collected as a list of dicts, so we need to merge them
+        module_defaults = {}
+        for default in self._task.module_defaults:
+            module_defaults.update(default)
+        if module_defaults:
+            module_defaults = templar.template(module_defaults)
+        if self._task.action in module_defaults:
+            tmp_args = module_defaults[self._task.action].copy()
+            tmp_args.update(self._task.args)
+            self._task.args = tmp_args
+
         # And filter out any fields which were set to default(omit), and got the omit token value
         omit_token = variables.get('omit')
         if omit_token is not None:
@@ -593,9 +610,12 @@ class TaskExecutor:
                 return failed_when_result
 
             if 'ansible_facts' in result:
-                vars_copy.update(namespace_facts(result['ansible_facts']))
-                if C.INJECT_FACTS_AS_VARS:
-                    vars_copy.update(clean_facts(result['ansible_facts']))
+                if self._task.action in ('set_fact', 'include_vars'):
+                    vars_copy.update(result['ansible_facts'])
+                else:
+                    vars_copy.update(namespace_facts(result['ansible_facts']))
+                    if C.INJECT_FACTS_AS_VARS:
+                        vars_copy.update(clean_facts(result['ansible_facts']))
 
             # set the failed property if it was missing.
             if 'failed' not in result:
@@ -651,9 +671,12 @@ class TaskExecutor:
             variables[self._task.register] = wrap_var(result)
 
         if 'ansible_facts' in result:
-            variables.update(namespace_facts(result['ansible_facts']))
-            if C.INJECT_FACTS_AS_VARS:
-                variables.update(clean_facts(result['ansible_facts']))
+            if self._task.action in ('set_fact', 'include_vars'):
+                variables.update(result['ansible_facts'])
+            else:
+                variables.update(namespace_facts(result['ansible_facts']))
+                if C.INJECT_FACTS_AS_VARS:
+                    variables.update(clean_facts(result['ansible_facts']))
 
         # save the notification target in the result, if it was specified, as
         # this task may be running in a loop in which case the notification
@@ -855,7 +878,23 @@ class TaskExecutor:
         Starts the persistent connection
         '''
         master, slave = pty.openpty()
-        p = subprocess.Popen(["ansible-connection", to_text(os.getppid())], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        python = sys.executable
+
+        def find_file_in_path(filename):
+            # Check $PATH first, followed by same directory as sys.argv[0]
+            paths = os.environ['PATH'].split(os.pathsep) + [os.path.dirname(sys.argv[0])]
+            for dirname in paths:
+                fullpath = os.path.join(dirname, filename)
+                if os.path.isfile(fullpath):
+                    return fullpath
+
+            raise AnsibleError("Unable to find location of '%s'" % filename)
+
+        p = subprocess.Popen(
+            [python, find_file_in_path('ansible-connection'), to_text(os.getppid())],
+            stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
         stdin = os.fdopen(master, 'wb', 0)
         os.close(slave)
 
@@ -874,9 +913,13 @@ class TaskExecutor:
         stdin.close()
 
         if p.returncode == 0:
-            result = json.loads(to_text(stdout))
+            result = json.loads(to_text(stdout, errors='surrogate_then_replace'))
         else:
-            result = json.loads(to_text(stderr))
+            try:
+                result = json.loads(to_text(stderr, errors='surrogate_then_replace'))
+            except getattr(json.decoder, 'JSONDecodeError', ValueError):
+                # JSONDecodeError only available on Python 3.5+
+                result = {'error': to_text(stderr, errors='surrogate_then_replace')}
 
         if 'messages' in result:
             for msg in result.get('messages'):
@@ -884,8 +927,9 @@ class TaskExecutor:
 
         if 'error' in result:
             if self._play_context.verbosity > 2:
-                msg = "The full traceback is:\n" + result['exception']
-                display.display(msg, color=C.COLOR_ERROR)
+                if result.get('exception'):
+                    msg = "The full traceback is:\n" + result['exception']
+                    display.display(msg, color=C.COLOR_ERROR)
             raise AnsibleError(result['error'])
 
         return result['socket_path']

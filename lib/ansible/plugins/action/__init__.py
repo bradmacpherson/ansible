@@ -153,8 +153,8 @@ class ActionBase(with_metaclass(ABCMeta, object)):
         final_environment = dict()
         self._compute_environment_string(final_environment)
 
-        (module_data, module_style, module_shebang) = modify_module(module_name, module_path, module_args,
-                                                                    task_vars=task_vars, templar=self._templar,
+        (module_data, module_style, module_shebang) = modify_module(module_name, module_path, module_args, self._templar,
+                                                                    task_vars=task_vars,
                                                                     module_compression=self._play_context.module_compression,
                                                                     async_timeout=self._task.async_val,
                                                                     become=self._play_context.become,
@@ -569,6 +569,9 @@ class ActionBase(with_metaclass(ABCMeta, object)):
 
         if sudoable and expand_path == '~' and self._play_context.become and self._play_context.become_user:
             expand_path = '~%s' % self._play_context.become_user
+        else:
+            # use remote user instead, if none set default to current user
+            expand_path = '~%s' % self._play_context.remote_user or self._connection.default_user or ''
 
         # use shell to construct appropriate command and execute
         cmd = self._connection._shell.expand_user(expand_path)

@@ -12,8 +12,8 @@ from lib.util import (
     ApplicationError,
     display,
     raw_command,
-    find_pip,
     get_docker_completion,
+    generate_pip_command,
 )
 
 from lib.delegation import (
@@ -112,7 +112,7 @@ def parse_args():
     except ImportError:
         if '--requirements' not in sys.argv:
             raise
-        raw_command(generate_pip_install(find_pip(), 'ansible-test'))
+        raw_command(generate_pip_install(generate_pip_command(sys.executable), 'ansible-test'))
         import argparse
 
     try:
@@ -224,6 +224,10 @@ def parse_args():
     integration.add_argument('--allow-destructive',
                              action='store_true',
                              help='allow destructive tests (--local and --tox only)')
+
+    integration.add_argument('--allow-root',
+                             action='store_true',
+                             help='allow tests requiring root when not root')
 
     integration.add_argument('--retry-on-error',
                              action='store_true',
@@ -397,6 +401,15 @@ def parse_args():
     coverage_report.add_argument('--show-missing',
                                  action='store_true',
                                  help='show line numbers of statements not executed')
+    coverage_report.add_argument('--include',
+                                 metavar='PAT1,PAT2,...',
+                                 help='include only files whose paths match one of these '
+                                      'patterns. Accepts shell-style wildcards, which must be '
+                                      'quoted.')
+    coverage_report.add_argument('--omit',
+                                 metavar='PAT1,PAT2,...',
+                                 help='omit files whose paths match one of these patterns. '
+                                      'Accepts shell-style wildcards, which must be quoted.')
 
     add_extra_coverage_options(coverage_report)
 
@@ -598,12 +611,15 @@ def add_extra_docker_options(parser, integration=True):
 
     docker.add_argument('--docker-util',
                         metavar='IMAGE',
-                        default='httptester',
+                        default='ansible/ansible@sha256:fa5def8c294fc50813af131c0b5737594d852abac9cbe7ba38e17bf1c8476f3f',  # httptester
                         help='docker utility image to provide test services')
 
     docker.add_argument('--docker-privileged',
                         action='store_true',
                         help='run docker container in privileged mode')
+
+    docker.add_argument('--docker-memory',
+                        help='memory limit for docker in bytes', type=int)
 
 
 def complete_target(prefix, parsed_args, **_):

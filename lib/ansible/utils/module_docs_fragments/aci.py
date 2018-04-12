@@ -18,8 +18,9 @@ options:
   port:
     description:
     - Port number to be used for REST connection.
+    - The default value depends on parameter `use_ssl`.
     type: int
-    default: 443 (for https), 80 (for http)
+    default: 443 (https), 80 (http)
   username:
     description:
     - The username to use for authentication.
@@ -41,14 +42,13 @@ options:
     description:
     - The X.509 certificate name attached to the APIC AAA user used for signature-based authentication.
     - It defaults to the C(private_key) basename, without extension.
-    default: private_key basename
     aliases: [ cert_name ]
   output_level:
     description:
     - Influence the output of this ACI module.
     - C(normal) means the standard output, incl. C(current) dict
-    - C(info) means informational output, incl. C(previous), C(proposed) and C(sent) dicts
-    - C(debug) means debugging output, incl. C(filter_string), C(method), C(response), C(status) and C(url) information
+    - C(info) adds informational output, incl. C(previous), C(proposed) and C(sent) dicts
+    - C(debug) adds debugging output, incl. C(filter_string), C(method), C(response), C(status) and C(url) information
     choices: [ debug, info, normal ]
     default: normal
   timeout:
