@@ -38,6 +38,13 @@ options:
     uid:
         description:
             - Optionally sets the I(UID) of the user.
+    hidden:
+        required: false
+        type: bool
+        description:
+            - Darwin/OS X only, optionally hide the user from the login window and system preferences.
+            - The default will be 'True' if the I(system) option is used.
+        version_added: "2.6"
     non_unique:
         description:
             - Optionally when used with the -u option, this option allows to
@@ -232,7 +239,7 @@ from ansible.module_utils.basic import load_platform_subclass, AnsibleModule
 try:
     import spwd
     HAVE_SPWD = True
-except:
+except ImportError:
     HAVE_SPWD = False
 
 
@@ -265,6 +272,7 @@ class User(object):
         self.state = module.params['state']
         self.name = module.params['name']
         self.uid = module.params['uid']
+        self.hidden = module.params['hidden']
         self.non_unique = module.params['non_unique']
         self.seuser = module.params['seuser']
         self.group = module.params['group']
@@ -619,14 +627,17 @@ class User(object):
         if os.path.isabs(self.ssh_file):
             ssh_key_file = self.ssh_file
         else:
+            if not os.path.exists(info[5]) and not self.module.check_mode:
+                raise Exception('User %s home directory does not exist' % self.name)
             ssh_key_file = os.path.join(info[5], self.ssh_file)
         return ssh_key_file
 
     def ssh_key_gen(self):
         info = self.user_info()
-        if not os.path.exists(info[5]) and not self.module.check_mode:
-            return (1, '', 'User %s home directory does not exist' % self.name)
-        ssh_key_file = self.get_ssh_key_path()
+        try:
+            ssh_key_file = self.get_ssh_key_path()
+        except Exception as e:
+            return (1, '', to_native(e))
         ssh_dir = os.path.dirname(ssh_key_file)
         if not os.path.exists(ssh_dir):
             if self.module.check_mode:
@@ -848,11 +859,15 @@ class FreeBsdUser(User):
             cmd.append('-c')
             cmd.append(self.comment)
 
-        if self.home is not None and info[5] != self.home:
-            if self.move_home:
+        if self.home is not None:
+            if (info[5] != self.home and self.move_home) or (not os.path.exists(self.home) and self.createhome):
                 cmd.append('-m')
             cmd.append('-d')
             cmd.append(self.home)
+
+            if self.skeleton is not None:
+                cmd.append('-k')
+                cmd.append(self.skeleton)
 
         if self.group is not None:
             if not self.group_exists(self.group):
@@ -903,9 +918,8 @@ class FreeBsdUser(User):
                 cmd.append(','.join(new_groups))
 
         if self.expires:
-            days = (time.mktime(self.expires) - time.time()) // 86400
             cmd.append('-e')
-            cmd.append(str(int(days)))
+            cmd.append(str(int(time.mktime(self.expires))))
 
         # modify the user if cmd will do anything
         if cmd_len != len(cmd):
@@ -1505,7 +1519,25 @@ class DarwinUser(User):
         ('shell', 'UserShell'),
         ('uid', 'UniqueID'),
         ('group', 'PrimaryGroupID'),
+        ('hidden', 'IsHidden'),
     ]
+
+    def __init__(self, module):
+
+        super(DarwinUser, self).__init__(module)
+
+        # make the user hidden if option is set or deffer to system option
+        if self.hidden is None:
+            if self.system:
+                self.hidden = 1
+        elif self.hidden:
+            self.hidden = 1
+        else:
+            self.hidden = 0
+
+        # add hidden to processing if set
+        if self.hidden is not None:
+            self.fields.append(('hidden', 'IsHidden'))
 
     def _get_dscl(self):
         return [self.module.get_bin_path('dscl', True), self.dscl_directory]
@@ -2037,7 +2069,6 @@ class HPUX(User):
     def modify_user(self):
         cmd = ['/usr/sam/lbin/usermod.sam']
         info = self.user_info()
-        has_append = self._check_usermod_append()
 
         if self.uid is not None and info[2] != int(self.uid):
             cmd.append('-u')
@@ -2129,6 +2160,8 @@ def main():
             shell=dict(type='str'),
             password=dict(type='str', no_log=True),
             login_class=dict(type='str'),
+            # following options are specific to macOS
+            hidden=dict(type='bool'),
             # following options are specific to selinux
             seuser=dict(type='str'),
             # following options are specific to userdel

@@ -1,6 +1,6 @@
 :source: @{ source }@
 
-.. _@{ module }@:
+.. _@{ module }@_@{ plugin_type }@:
 {% for alias in aliases %}
 .. _@{ alias }@:
 {% endfor %}
@@ -386,7 +386,7 @@ please refer to this `Knowledge Base article <https://access.redhat.com/articles
 
 {% else %}
 
-This module is flagged as **deprecated** and will be removed in version { deprecated['removed_in'] | default('') | string | convert_symbols_to_format }@. For more information see :ref:`DEPRECATED`.
+This module is flagged as **deprecated** and will be removed in version @{ deprecated['removed_in'] | default('') | string | convert_symbols_to_format }@. For more information see `DEPRECATED`_.
 
 {% endif %}
 
@@ -402,4 +402,8 @@ Author
 {% endif %}
 
 .. hint::
+{%   if plugin_type == 'module' %}
     If you notice any issues in this documentation you can `edit this document <https://github.com/ansible/ansible/edit/devel/lib/ansible/modules/@{ source }@?description=%3C!---%20Your%20description%20here%20--%3E%0A%0A%2Blabel:%20docsite_pr>`_ to improve it.
+{% else %}
+    If you notice any issues in this documentation you can `edit this document <https://github.com/ansible/ansible/edit/devel/lib/ansible/plugins/@{ plugin_type }@/@{ source }@_` to improve it.
+{% endif %}
